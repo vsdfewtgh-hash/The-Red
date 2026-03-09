@@ -32,6 +32,7 @@ const dramas = [
 
 // 用户数据 (内存存储，生产环境用数据库)
 const users = new Map();
+const invites = new Map(); // 邀请记录
 
 // Bot
 let bot;
@@ -108,6 +109,45 @@ app.get('/api/user/:id', (req, res) => {
     users.set(userId, { coins: 500, unlocked: [] });
   }
   res.json(users.get(userId));
+});
+
+// API: 记录邀请关系
+app.post('/api/invite/record', (req, res) => {
+  const { userId, referrer } = req.body;
+  
+  if (!userId || !referrer) {
+    return res.status(400).json({ error: 'Missing userId or referrer' });
+  }
+  
+  // 记录被邀请人
+  if (!users.has(userId)) {
+    users.set(userId, { coins: 500, unlocked: [] });
+  }
+  const user = users.get(userId);
+  user.referrer = referrer;
+  
+  // 记录邀请人
+  if (!invites.has(referrer)) {
+    invites.set(referrer, { count: 0, invitees: [] });
+  }
+  const inviter = invites.get(referrer);
+  if (!inviter.invitees.includes(userId)) {
+    inviter.count++;
+    inviter.invitees.push(userId);
+    // 给邀请人加金币
+    const inviterUser = users.get(referrer) || { coins: 500, unlocked: [] };
+    inviterUser.coins = (inviterUser.coins || 500) + 50;
+    users.set(referrer, inviterUser);
+  }
+  
+  res.json({ success: true, inviteCount: inviter.count });
+});
+
+// API: 获取邀请统计
+app.get('/api/invite/:userId', (req, res) => {
+  const userId = req.params.userId;
+  const inviteData = invites.get(userId) || { count: 0, invitees: [] };
+  res.json(inviteData);
 });
 
 app.listen(PORT, () => {

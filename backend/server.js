@@ -9,6 +9,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.static('../frontend/dist'));
+app.use('/admin', express.static('../admin/dist'));
 
 const PORT = process.env.PORT || 3000;
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -156,5 +157,9 @@ app.listen(PORT, () => {
 
 // SPA fallback
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
+  if (req.path.startsWith('/admin')) {
+    res.sendFile(path.join(__dirname, '../admin/dist/index.html'));
+  } else {
+    res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
+  }
 });

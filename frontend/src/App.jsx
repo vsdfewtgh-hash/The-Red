@@ -44,12 +44,12 @@ const DRAMAS = [
   }
 ]
 
-// 金币套餐
+// 金币套餐 (Telegram Stars)
 const COIN_PACKAGES = [
-  { id: 1, coins: 100, price: 0.99, bonus: 0 },
-  { id: 2, coins: 500, price: 4.99, bonus: 50 },
-  { id: 3, coins: 1000, price: 9.99, bonus: 200 },
-  { id: 4, coins: 2000, price: 19.99, bonus: 500 },
+  { id: 1, coins: 100, price: 0.99, bonus: 0, stars: 13 },
+  { id: 2, coins: 500, price: 4.99, bonus: 50, stars: 65 },
+  { id: 3, coins: 1000, price: 9.99, bonus: 200, stars: 130 },
+  { id: 4, coins: 2000, price: 19.99, bonus: 500, stars: 260 },
 ]
 
 const API_BASE = 'http://localhost:3000/api'
@@ -58,19 +58,24 @@ export default function App() {
   const [currentDramaId, setCurrentDramaId] = useState(1)
   const [currentEpisode, setCurrentEpisode] = useState(0)
   const [isPlaying, setIsPlaying] = useState(true)
+  const [playbackRate, setPlaybackRate] = useState(1)
   const [showPaywall, setShowPaywall] = useState(false)
   const [showEpisodes, setShowEpisodes] = useState(false)
   const [showTasks, setShowTasks] = useState(false)
   const [showWallet, setShowWallet] = useState(false)
   const [showDramaList, setShowDramaList] = useState(false)
   const [coins, setCoins] = useState(500)
+  const [checkedIn, setCheckedIn] = useState(false)
   const [inviteCount, setInviteCount] = useState(0)
+  const [isRecharging, setIsRecharging] = useState(false)
+  const [lastScrollY, setLastScrollY] = useState(0)
   const [userId] = useState(() => {
     const params = new URLSearchParams(window.location.search)
     return params.get('user_id') || `user_${Date.now()}`
   })
   const [referrer] = useState(() => new URLSearchParams(window.location.search).get('ref'))
   const videoRef = useRef(null)
+  const longPressTimer = useRef(null)
 
   const currentDrama = DRAMAS.find(d => d.id === currentDramaId) || DRAMAS[0]
   const episode = currentDrama.episodes[currentEpisode]
@@ -82,6 +87,24 @@ export default function App() {
     setCurrentEpisode(0)
     setShowDramaList(false)
   }
+
+  // 视频播放控制
+  useEffect(() => {
+    if (videoRef.current) {
+      if (isPlaying) {
+        videoRef.current.play().catch(() => {})
+      } else {
+        videoRef.current.pause()
+      }
+    }
+  }, [isPlaying])
+
+  // 倍速控制
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.playbackRate = playbackRate
+    }
+  }, [playbackRate])
 
   // 检查是否有邀请关系
   useEffect(() => {
@@ -108,19 +131,46 @@ export default function App() {
     }
   }
 
-  // 上下滑动切换
-  const handleScroll = (e) => {
-    if (showPaywall || showEpisodes || showTasks || showWallet || showDramaList) return
-    
-    if (e.deltaY > 0 && currentEpisode < currentDrama.episodes.length - 1) {
-      if (currentEpisode + 1 >= currentDrama.paywallAt && currentEpisode + 1 >= currentDrama.paywallAt) {
-        setShowPaywall(true)
-      } else {
-        setCurrentEpisode(c => c + 1)
+  // 触摸滑动切换集数
+  const handleTouchStart = (e) => {
+    setLastScrollY(e.touches[0].clientY)
+  }
+
+  const handleTouchEnd = (e) => {
+    const deltaY = lastScrollY - e.changedTouches[0].clientY
+    if (Math.abs(deltaY) > 50) {
+      if (deltaY > 0 && currentEpisode < currentDrama.episodes.length - 1) {
+        // 向上滑 -> 下一集
+        if (currentEpisode + 1 >= currentDrama.paywallAt && isLocked) {
+          setShowPaywall(true)
+        } else {
+          setCurrentEpisode(c => c + 1)
+        }
+      } else if (deltaY < 0 && currentEpisode > 0) {
+        // 向下滑 -> 上一集
+        setCurrentEpisode(c => c - 1)
       }
-    } else if (e.deltaY < 0 && currentEpisode > 0) {
-      setCurrentEpisode(c => c - 1)
     }
+  }
+
+  // 长按加速
+  const handleLongPressStart = () => {
+    longPressTimer.current = setTimeout(() => {
+      setPlaybackRate(2)
+    }, 500)
+  }
+
+  const handleLongPressEnd = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+    setPlaybackRate(1)
+  }
+
+  // 点击视频播放/暂停
+  const handleVideoClick = () => {
+    setIsPlaying(!isPlaying)
   }
 
   // 支付解锁
@@ -137,8 +187,11 @@ export default function App() {
 
   // 签到领金币
   const handleCheckIn = () => {
-    setCoins(c => c + 100)
-    alert('✅ 签到成功！+100 金币')
+    if (!checkedIn) {
+      setCoins(c => c + 100)
+      setCheckedIn(true)
+      alert('✅ 签到成功！+100 金币')
+    }
   }
 
   // 复制邀请链接
@@ -151,19 +204,28 @@ export default function App() {
   // 分享到 Telegram
   const shareToTelegram = () => {
     const link = `${window.location.origin}?ref=${userId}`
-    const text = `🔥 快来看《${currentDrama.title}》！我在这个神器看短剧，邀请你一起~`
+    const text = `🔥 快来看《${currentDrama.title}》！`
     window.open(`https://telegram.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`)
   }
 
-  // 金币充值 (模拟)
-  const handleRecharge = (pkg) => {
+  // Telegram Stars 充值 (模拟)
+  const handleRecharge = async (pkg) => {
+    setIsRecharging(true)
+    
+    // 模拟支付流程
+    alert(`💳 即将跳转 Telegram Stars 支付...\n\n${pkg.coins + pkg.bonus} 金币 = ${pkg.stars} Stars`)
+    
+    // 模拟支付延迟
+    await new Promise(resolve => setTimeout(resolve, 1500))
+    
     setCoins(c => c + pkg.coins + pkg.bonus)
-    alert(`💰 充值成功！+${pkg.coins + pkg.bonus} 金币`)
+    setIsRecharging(false)
+    alert(`✅ 充值成功！+${pkg.coins + pkg.bonus} 金币`)
     setShowWallet(false)
   }
 
   return (
-    <div className="app" onWheel={handleScroll} style={styles.app}>
+    <div style={styles.app}>
       {/* 顶部栏 */}
       <div style={styles.header}>
         <div style={styles.headerLeft} onClick={() => setShowDramaList(true)}>
@@ -177,7 +239,11 @@ export default function App() {
       </div>
 
       {/* 视频播放器 */}
-      <div style={styles.videoContainer}>
+      <div 
+        style={styles.videoContainer}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
         <video
           ref={videoRef}
           key={`${currentDramaId}-${episode.id}`}
@@ -187,7 +253,12 @@ export default function App() {
           playsInline
           muted={false}
           onEnded={handleVideoEnd}
-          onClick={() => setIsPlaying(!isPlaying)}
+          onClick={handleVideoClick}
+          onMouseDown={handleLongPressStart}
+          onMouseUp={handleLongPressEnd}
+          onMouseLeave={handleLongPressEnd}
+          onTouchStart={handleLongPressStart}
+          onTouchEnd={handleLongPressEnd}
         />
         
         {/* 播放/暂停指示器 */}
@@ -204,6 +275,11 @@ export default function App() {
           )}
         </AnimatePresence>
 
+        {/* 倍速指示器 */}
+        {playbackRate > 1 && (
+          <div style={styles.speedBadge}>2x</div>
+        )}
+
         {/* 集数指示 */}
         <div style={styles.episodeBadge}>
           {currentDrama.title} · 第 {episode.id} 集 {isLocked ? '🔒' : ''}
@@ -213,12 +289,9 @@ export default function App() {
       {/* 底部控制栏 */}
       <div style={styles.controls}>
         <button style={styles.controlBtn} onClick={() => setShowEpisodes(true)}>
-          📋 选集
+          📋
         </button>
-        <button 
-          style={styles.controlBtn} 
-          onClick={() => setIsPlaying(!isPlaying)}
-        >
+        <button style={styles.controlBtn} onClick={handleVideoClick}>
           {isPlaying ? '⏸️' : '▶️'}
         </button>
       </div>
@@ -243,7 +316,7 @@ export default function App() {
                   style={{
                     ...styles.episodeItem,
                     ...(i === currentEpisode ? styles.episodeActive : {}),
-                    ...(i < currentDrama.paywallAt ? {} : styles.episodeLocked)
+                    ...(i < currentDrama.paywallAt ? {} : i > currentEpisode ? styles.episodeLocked : {})
                   }}
                   onClick={() => {
                     if (i >= currentDrama.paywallAt && i > currentEpisode) {
@@ -271,12 +344,14 @@ export default function App() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             style={styles.overlay}
+            onClick={() => setShowDramaList(false)}
           >
             <motion.div 
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               style={styles.dramaSheet}
+              onClick={e => e.stopPropagation()}
             >
               <div style={styles.sheetHeader}>
                 <span>📺 剧库</span>
@@ -313,12 +388,14 @@ export default function App() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             style={styles.overlay}
+            onClick={() => setShowTasks(false)}
           >
             <motion.div 
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               style={styles.taskSheet}
+              onClick={e => e.stopPropagation()}
             >
               <div style={styles.sheetHeader}>
                 <span>📜 任务中心</span>
@@ -334,7 +411,13 @@ export default function App() {
                     <div style={styles.taskDesc}>签到即送 100 金币</div>
                   </div>
                 </div>
-                <button style={styles.taskBtn2} onClick={handleCheckIn}>签到</button>
+                <button 
+                  style={checkedIn ? styles.taskBtnDisabled : styles.taskBtn2} 
+                  onClick={handleCheckIn}
+                  disabled={checkedIn}
+                >
+                  {checkedIn ? '已签到' : '签到'}
+                </button>
               </div>
 
               {/* 邀请好友 */}
@@ -373,12 +456,14 @@ export default function App() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             style={styles.overlay}
+            onClick={() => setShowWallet(false)}
           >
             <motion.div 
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               style={styles.walletSheet}
+              onClick={e => e.stopPropagation()}
             >
               <div style={styles.sheetHeader}>
                 <span>💰 金币钱包</span>
@@ -392,25 +477,25 @@ export default function App() {
               </div>
 
               {/* 充值套餐 */}
-              <div style={styles.rechargeTitle}>充值套餐</div>
+              <div style={styles.rechargeTitle}>充值套餐 (Telegram Stars)</div>
               <div style={styles.packageGrid}>
                 {COIN_PACKAGES.map(pkg => (
                   <div 
                     key={pkg.id} 
-                    style={styles.packageCard}
-                    onClick={() => handleRecharge(pkg)}
+                    style={isRecharging ? styles.packageCardDisabled : styles.packageCard}
+                    onClick={() => !isRecharging && handleRecharge(pkg)}
                   >
                     <div style={styles.packageCoins}>{pkg.coins + pkg.bonus}</div>
                     <div style={styles.packageBonus}>{pkg.bonus > 0 ? `送${pkg.bonus}` : ''}</div>
-                    <div style={styles.packagePrice}>${pkg.price}</div>
+                    <div style={styles.packagePrice}>${pkg.price} ({pkg.stars} ⭐)</div>
                   </div>
                 ))}
               </div>
 
               {/* 提示 */}
               <div style={styles.rechargeTip}>
-                💡 充值即代表同意用户协议<br/>
-                🔒 安全支付由 Telegram Stars 提供
+                💡 点击套餐即通过 Telegram Stars 支付<br/>
+                🔒 安全支付由 Telegram 提供保障
               </div>
             </motion.div>
           </motion.div>
@@ -473,7 +558,8 @@ const styles = {
     background: '#000',
     display: 'flex',
     flexDirection: 'column',
-    overflow: 'hidden'
+    overflow: 'hidden',
+    touchAction: 'pan-y'
   },
   header: {
     position: 'absolute',
@@ -542,6 +628,18 @@ const styles = {
     color: '#fff',
     textShadow: '0 2px 10px rgba(0,0,0,0.5)'
   },
+  speedBadge: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    background: 'rgba(255,107,53,0.9)',
+    color: '#fff',
+    padding: '8px 16px',
+    borderRadius: '8px',
+    fontSize: '24px',
+    fontWeight: 'bold'
+  },
   episodeBadge: {
     position: 'absolute',
     bottom: '100px',
@@ -563,9 +661,9 @@ const styles = {
     background: 'rgba(255,255,255,0.2)',
     border: 'none',
     color: '#fff',
-    padding: '10px 20px',
+    padding: '12px 24px',
     borderRadius: '25px',
-    fontSize: '14px',
+    fontSize: '18px',
     cursor: 'pointer',
     backdropFilter: 'blur(10px)'
   },
@@ -625,7 +723,7 @@ const styles = {
     background: '#ff6b35'
   },
   episodeLocked: {
-    opacity: 0.5
+    opacity: 0.4
   },
   dramaList: {
     display: 'flex',
@@ -718,6 +816,15 @@ const styles = {
     borderRadius: '8px',
     fontSize: '14px',
     cursor: 'pointer'
+  },
+  taskBtnDisabled: {
+    background: '#666',
+    border: 'none',
+    color: '#fff',
+    padding: '8px 16px',
+    borderRadius: '8px',
+    fontSize: '14px',
+    cursor: 'not-allowed'
   },
   inviteCount: {
     fontSize: '14px',
@@ -812,6 +919,14 @@ const styles = {
     textAlign: 'center',
     cursor: 'pointer',
     border: '2px solid transparent'
+  },
+  packageCardDisabled: {
+    background: '#2a2a2a',
+    padding: '16px',
+    borderRadius: '12px',
+    textAlign: 'center',
+    cursor: 'not-allowed',
+    opacity: 0.5
   },
   packageCoins: {
     fontSize: '20px',

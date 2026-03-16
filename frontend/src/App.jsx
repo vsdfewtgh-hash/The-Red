@@ -52,9 +52,11 @@ const COIN_PACKAGES = [
   { id: 4, coins: 2000, price: 19.99, bonus: 500, stars: 260 },
 ]
 
-const API_BASE = 'http://localhost:3000/api'
+const API_BASE = '/api'
 
 export default function App() {
+  const [dramas, setDramas] = useState([])
+  const [loading, setLoading] = useState(true)
   const [currentDramaId, setCurrentDramaId] = useState(1)
   const [currentEpisode, setCurrentEpisode] = useState(0)
   const [isPlaying, setIsPlaying] = useState(true)
@@ -77,9 +79,22 @@ export default function App() {
   const videoRef = useRef(null)
   const longPressTimer = useRef(null)
 
-  const currentDrama = DRAMAS.find(d => d.id === currentDramaId) || DRAMAS[0]
-  const episode = currentDrama.episodes[currentEpisode]
-  const isLocked = currentEpisode >= currentDrama.paywallAt
+  const currentDrama = (dramas.length > 0 ? dramas : DRAMAS).find(d => d.id === currentDramaId) || (dramas.length > 0 ? dramas : DRAMAS)[0]
+  const episode = currentDrama?.episodes?.[currentEpisode]
+  const isLocked = currentEpisode >= (currentDrama?.paywallAt || 10)
+
+  // 从 API 获取剧集数据
+  useEffect(() => {
+    fetch(`${API_BASE}/dramas`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.length > 0) {
+          setDramas(data)
+        }
+        setLoading(false)
+      })
+      .catch(err => console.error('Failed to fetch dramas:', err))
+  }, [])
 
   // 切换剧集
   const switchDrama = (dramaId) => {
@@ -358,7 +373,7 @@ export default function App() {
                 <button onClick={() => setShowDramaList(false)}>✕</button>
               </div>
               <div style={styles.dramaList}>
-                {DRAMAS.map(drama => (
+                {dramas.map(drama => (
                   <div 
                     key={drama.id}
                     style={drama.id === currentDramaId ? styles.dramaItemActive : styles.dramaItem}
@@ -367,7 +382,6 @@ export default function App() {
                     <img src={drama.cover} style={styles.dramaCover} alt={drama.title} />
                     <div style={styles.dramaInfo}>
                       <div style={styles.dramaName}>{drama.title}</div>
-                      <div style={styles.dramaDesc}>{drama.description}</div>
                       <div style={styles.dramaMeta}>
                         {drama.episodes.length}集 · {drama.paywallAt}集免费
                       </div>

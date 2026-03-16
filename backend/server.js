@@ -8,39 +8,36 @@ const path = require('path');
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(express.static('../frontend/dist'));
-app.use('/admin', express.static('../admin/dist'));
 
 const PORT = process.env.PORT || 3000;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MINI_APP_URL = process.env.MINI_APP_URL || 'http://localhost:5173';
 
-// 模拟数据 - 短剧列表
+// 短剧列表 - 真实视频
 const dramas = [
   {
     id: 1,
-    title: "龙王归来",
+    title: "九块九秒杀一切",
     cover: "https://picsum.photos/400/700?random=1",
-    episodes: Array.from({ length: 20 }, (_, i) => ({
+    episodes: Array.from({ length: 108 }, (_, i) => ({
       id: i + 1,
-      url: `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4#t=${i * 10}`,
-      free: i < 3 // 前3集免费
+      url: `/videos/第${String(i + 1).padStart(2, '0')}集.mp4`,
+      free: true
     })),
-    pricePerEpisode: 100, // 金币
-    paywallAt: 3 // 第3集后付费
+    pricePerEpisode: 100,
+    paywallAt: 11
   }
 ];
 
-// 用户数据 (内存存储，生产环境用数据库)
+// 用户数据
 const users = new Map();
-const invites = new Map(); // 邀请记录
+const invites = new Map();
 
 // Bot
 let bot;
 if (BOT_TOKEN && BOT_TOKEN !== 'YOUR_BOT_TOKEN_HERE') {
   bot = new Bot(BOT_TOKEN);
   
-  // 欢迎语料库 (防红标)
   const welcomes = [
     "🎬 欢迎回来！最新章节已更新，点击开始观看~",
     "✨ 好剧来了！立即体验沉浸式追剧",
@@ -51,12 +48,8 @@ if (BOT_TOKEN && BOT_TOKEN !== 'YOUR_BOT_TOKEN_HERE') {
   bot.command('start', async (ctx) => {
     const from = ctx.message?.from;
     const ref = ctx.match || 'direct';
-    
-    // 记录来源
     console.log(`User ${from?.id} started from ref: ${ref}`);
-    
     const welcome = welcomes[Math.floor(Math.random() * welcomes.length)];
-    
     await ctx.reply(welcome, {
       reply_markup: {
         inline_keyboard: [[
@@ -67,7 +60,6 @@ if (BOT_TOKEN && BOT_TOKEN !== 'YOUR_BOT_TOKEN_HERE') {
   });
 
   bot.on('message', async (ctx) => {
-    // 随机回复防spam
     const responses = [
       "点击上方按钮开始看剧哦~ 🎬",
       "有问题？直接点击开始按钮体验！",
@@ -77,89 +69,76 @@ if (BOT_TOKEN && BOT_TOKEN !== 'YOUR_BOT_TOKEN_HERE') {
       await ctx.reply(responses[Math.floor(Math.random() * responses.length)]);
     }
   });
-
+  
   bot.start();
-  console.log('🤖 Bot started');
 }
 
-// API: 获取剧集信息
+// API 路由
+app.get('/api/dramas', (req, res) => res.json(dramas));
+
 app.get('/api/drama/:id', (req, res) => {
   const drama = dramas.find(d => d.id === parseInt(req.params.id));
-  if (!drama) return res.status(404).json({ error: 'Drama not found' });
-  res.json(drama);
+  drama ? res.json(drama) : res.status(404).json({ error: 'Not found' });
 });
 
-// API: 解锁剧集 (模拟支付)
 app.post('/api/unlock', (req, res) => {
   const { userId, dramaId, episodeId } = req.body;
-  
-  // 模拟：给用户送金币
-  if (!users.has(userId)) {
-    users.set(userId, { coins: 500, unlocked: [] });
+  const user = users.get(userId) || { id: userId, coins: 0, unlocked: [] };
+  if (user.coins >= 100) {
+    user.coins -= 100;
+    user.unlocked.push(`${dramaId}-${episodeId}`);
+    users.set(userId, user);
+    res.json({ success: true });
+  } else {
+    res.json({ success: false, message: '金币不足' });
   }
-  const user = users.get(userId);
-  user.coins += 100; // 签到送金币
-  
-  res.json({ success: true, coins: user.coins });
 });
 
-// API: 用户信息
 app.get('/api/user/:id', (req, res) => {
-  const userId = req.params.id;
-  if (!users.has(userId)) {
-    users.set(userId, { coins: 500, unlocked: [] });
-  }
-  res.json(users.get(userId));
+  const user = users.get(req.params.id) || { id: req.params.id, coins: 500, unlocked: [] };
+  res.json(user);
 });
 
-// API: 记录邀请关系
+app.post('/api/signin', (req, res) => {
+  const { userId } = req.body;
+  const user = users.get(userId) || { id: userId, coins: 0, lastSignIn: null };
+  const today = new Date().toDateString();
+  if (user.lastSignIn !== today) {
+    user.coins += 100;
+    user.lastSignIn = today;
+    users.set(userId, user);
+    res.json({ success: true, coins: user.coins });
+  } else {
+    res.json({ success: false, message: '今天已签到' });
+  }
+});
+
 app.post('/api/invite/record', (req, res) => {
   const { userId, referrer } = req.body;
-  
-  if (!userId || !referrer) {
-    return res.status(400).json({ error: 'Missing userId or referrer' });
+  if (referrer && referrer !== userId) {
+    const inviter = users.get(referrer) || { id: referrer, coins: 0, inviteCount: 0 };
+    inviter.coins += 50;
+    inviter.inviteCount = (inviter.inviteCount || 0) + 1;
+    users.set(referrer, inviter);
   }
-  
-  // 记录被邀请人
-  if (!users.has(userId)) {
-    users.set(userId, { coins: 500, unlocked: [] });
-  }
-  const user = users.get(userId);
-  user.referrer = referrer;
-  
-  // 记录邀请人
-  if (!invites.has(referrer)) {
-    invites.set(referrer, { count: 0, invitees: [] });
-  }
-  const inviter = invites.get(referrer);
-  if (!inviter.invitees.includes(userId)) {
-    inviter.count++;
-    inviter.invitees.push(userId);
-    // 给邀请人加金币
-    const inviterUser = users.get(referrer) || { coins: 500, unlocked: [] };
-    inviterUser.coins = (inviterUser.coins || 500) + 50;
-    users.set(referrer, inviterUser);
-  }
-  
-  res.json({ success: true, inviteCount: inviter.count });
+  res.json({ success: true });
 });
 
-// API: 获取邀请统计
-app.get('/api/invite/:userId', (req, res) => {
-  const userId = req.params.userId;
-  const inviteData = invites.get(userId) || { count: 0, invitees: [] };
-  res.json(inviteData);
-});
+// 静态文件
+app.use('/videos', express.static('/Users/mac1/Desktop/drama/60.我用九块九秒杀一切（108集）黎沐清＆杨力'));
+app.use('/assets', express.static(path.join(__dirname, '../frontend/dist/assets')));
+app.use('/favicon.ico', express.static(path.join(__dirname, '../frontend/dist/favicon.ico')));
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+// 首页
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
 });
 
 // SPA fallback
 app.get('*', (req, res) => {
-  if (req.path.startsWith('/admin')) {
-    res.sendFile(path.join(__dirname, '../admin/dist/index.html'));
-  } else {
-    res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
-  }
+  res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
 });

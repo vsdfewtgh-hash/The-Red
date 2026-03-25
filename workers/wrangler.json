@@ -1,0 +1,16 @@
+{
+  "name": "the-red-api",
+  "compatibility_date": "2025-01-01",
+  "main": "index.ts",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "r2_buckets": [
+    {
+      "bucket_name": "the-red-videos",
+      "binding": "VIDEOS"
+    }
+  ],
+  "routes": [
+    { "pattern": "api.drama.thered.live/*", "zone_name": "thered.live" }
+  ]
+}

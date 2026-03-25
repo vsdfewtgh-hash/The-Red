@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 
-const API_BASE = 'https://api.drama.thered.live/api'
+const API_BASE = 'https://the-red-api.vsdfewtgh.workers.dev/api'
 
 // 分类标签
 const CATEGORIES = [
@@ -27,10 +27,33 @@ export default function App() {
   const [showEpisodes, setShowEpisodes] = useState(false)
   const [coins, setCoins] = useState(0)
   const [checkedIn, setCheckedIn] = useState(false)
+  const [streak, setStreak] = useState(0)
   const [userId] = useState(() => {
     const params = new URLSearchParams(window.location.search)
     return params.get('user_id') || `user_${Date.now()}`
   })
+
+  // 初始化用户并获取状态
+  useEffect(() => {
+    fetch(`${API_BASE}/user/${userId}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data && !data.error) {
+          setCoins(data.coins || 0)
+          const today = new Date().toISOString().slice(0, 10)
+          setCheckedIn(data.lastCheckIn === today)
+          setStreak(data.streak || 0)
+        }
+      })
+      .catch(() => {
+        // 用户不存在，初始化
+        fetch(`${API_BASE}/user/init`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId, username: `user_${userId}` })
+        })
+      })
+  }, [userId])
 
   const videoRef = useRef(null)
 
@@ -85,6 +108,13 @@ export default function App() {
   const handleCheckIn = async () => {
     if (checkedIn) return
     try {
+      // 先初始化用户
+      await fetch(`${API_BASE}/user/init`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, username: `user_${userId}` })
+      })
+      
       const res = await fetch(`${API_BASE}/checkin`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -92,12 +122,16 @@ export default function App() {
       })
       const data = await res.json()
       if (data.success) {
-        setCoins(coins + data.reward)
+        setCoins(data.reward + coins)
         setCheckedIn(true)
-        alert(`签到成功！获得 ${data.reward} 金币`)
+        setStreak(data.streak || 1)
+        alert(`签到成功！获得 ${data.reward} 金币\n连续签到: ${data.streak} 天`)
+      } else if (data.error) {
+        alert(data.error)
       }
     } catch (e) {
       console.error(e)
+      alert('签到失败，请稍后重试')
     }
   }
 
@@ -293,12 +327,13 @@ export default function App() {
       <div className="profile-header">
         <div className="avatar">👤</div>
         <p>用户: {userId}</p>
+        <p style={{color: '#888', marginTop: 5}}>连续签到: {streak} 天</p>
       </div>
       <div className="profile-menu">
-        <div className="menu-item">👀 浏览历史</div>
-        <div className="menu-item">❤️ 收藏</div>
-        <div className="menu-item">⚙️ 设置</div>
-        <div className="menu-item">📞 联系我们</div>
+        <div className="menu-item" onClick={() => alert('功能开发中')}>👀 浏览历史</div>
+        <div className="menu-item" onClick={() => alert('功能开发中')}>❤️ 收藏</div>
+        <div className="menu-item" onClick={() => alert('功能开发中')}>⚙️ 设置</div>
+        <div className="menu-item" onClick={() => alert('请联系客服 @xxx')}>📞 联系我们</div>
       </div>
     </div>
   )
@@ -767,6 +802,11 @@ export default function App() {
         .menu-item {
           padding: 15px 20px;
           border-bottom: 1px solid #333;
+          cursor: pointer;
+        }
+        
+        .menu-item:active {
+          background: #252525;
         }
       `}</style>
     </div>

@@ -85,14 +85,16 @@ const sources = [
 ];
 
 // 视频流处理 - 从 R2 读取
-app.get('/videos/:filename', async (c) => {
+app.get('/videos/:filename{.+}', async (c) => {
   const filename = c.req.param('filename');
+  console.log('Video requested:', filename);
   
   try {
     const object = await c.env.VIDEOS.get(filename);
+    console.log('R2 get result:', object ? 'found' : 'not found');
     
     if (!object) {
-      return c.text('Video not found', 404);
+      return c.text('Video not found: ' + filename, 404);
     }
     
     const headers = new Headers();
@@ -125,9 +127,18 @@ app.post('/api/user/init', async (c) => {
     users.set(userId, {
       id: userId,
       username: username || `user_${userId}`,
+      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`,
       coins: 0,
       totalSpent: 0,
       unlocked: [],
+      history: [], // 浏览历史
+      favorites: [], // 收藏
+      orders: [], // 订单记录
+      settings: {
+        notifications: true,
+        autoplay: true,
+        quality: 'auto'
+      },
       inviteCount: 0,
       referrer: referrer || null,
       createdAt: new Date().toISOString(),
@@ -149,6 +160,155 @@ app.get('/api/user/:id', (c) => {
   const user = users.get(userId);
   if (!user) return c.json({ error: 'User not found' }, 404);
   return c.json(user);
+});
+
+// 更新用户资料
+app.put('/api/user/:id/profile', async (c) => {
+  const userId = c.req.param('id');
+  const user = users.get(userId);
+  if (!user) return c.json({ error: 'User not found' }, 404);
+  
+  const { username, avatar } = await c.req.json();
+  if (username) user.username = username;
+  if (avatar) user.avatar = avatar;
+  
+  return c.json({ success: true, user });
+});
+
+// 获取浏览历史
+app.get('/api/user/:id/history', (c) => {
+  const userId = c.req.param('id');
+  const user = users.get(userId);
+  if (!user) return c.json({ error: 'User not found' }, 404);
+  
+  const history = (user.history || []).map(h => {
+    const drama = dramas.find(d => d.id === h.dramaId);
+    if (!drama) return null;
+    return {
+      ...h,
+      dramaTitle: drama.title,
+      dramaCover: drama.cover
+    };
+  }).filter(Boolean).slice(0, 20);
+  
+  return c.json(history);
+});
+
+// 添加浏览历史
+app.post('/api/user/:id/history', async (c) => {
+  const userId = c.req.param('id');
+  const user = users.get(userId);
+  if (!user) return c.json({ error: 'User not found' }, 404);
+  
+  const { dramaId, episodeId, dramaTitle, dramaCover } = await c.req.json();
+  if (!user.history) user.history = [];
+  
+  // 移除重复项
+  user.history = user.history.filter(h => !(h.dramaId === dramaId && h.episodeId === episodeId));
+  
+  // 添加到最前面
+  user.history.unshift({
+    dramaId,
+    episodeId,
+    dramaTitle,
+    dramaCover,
+    watchedAt: new Date().toISOString()
+  });
+  
+  // 保留最近50条
+  user.history = user.history.slice(0, 50);
+  
+  return c.json({ success: true });
+});
+
+// 获取收藏列表
+app.get('/api/user/:id/favorites', (c) => {
+  const userId = c.req.param('id');
+  const user = users.get(userId);
+  if (!user) return c.json({ error: 'User not found' }, 404);
+  
+  const favorites = (user.favorites || []).map(f => {
+    const drama = dramas.find(d => d.id === f.dramaId);
+    if (!drama) return null;
+    return {
+      ...f,
+      dramaTitle: drama.title,
+      dramaCover: drama.cover,
+      totalEpisodes: drama.episodes.length
+    };
+  }).filter(Boolean);
+  
+  return c.json(favorites);
+});
+
+// 添加收藏
+app.post('/api/user/:id/favorite', async (c) => {
+  const userId = c.req.param('id');
+  const user = users.get(userId);
+  if (!user) return c.json({ error: 'User not found' }, 404);
+  
+  const { dramaId } = await c.req.json();
+  const drama = dramas.find(d => d.id === dramaId);
+  if (!drama) return c.json({ error: 'Drama not found' }, 404);
+  
+  if (!user.favorites) user.favorites = [];
+  
+  // 检查是否已收藏
+  if (user.favorites.some(f => f.dramaId === dramaId)) {
+    return c.json({ success: true, already: true });
+  }
+  
+  user.favorites.push({
+    dramaId,
+    addedAt: new Date().toISOString()
+  });
+  
+  return c.json({ success: true });
+});
+
+// 取消收藏
+app.delete('/api/user/:id/favorite/:dramaId', (c) => {
+  const userId = c.req.param('id');
+  const dramaId = parseInt(c.req.param('dramaId'));
+  const user = users.get(userId);
+  if (!user) return c.json({ error: 'User not found' }, 404);
+  
+  if (!user.favorites) user.favorites = [];
+  user.favorites = user.favorites.filter(f => f.dramaId !== dramaId);
+  
+  return c.json({ success: true });
+});
+
+// 获取订单记录
+app.get('/api/user/:id/orders', (c) => {
+  const userId = c.req.param('id');
+  const user = users.get(userId);
+  if (!user) return c.json({ error: 'User not found' }, 404);
+  
+  return c.json(user.orders || []);
+});
+
+// 添加订单记录
+app.post('/api/user/:id/order', async (c) => {
+  const userId = c.req.param('id');
+  const user = users.get(userId);
+  if (!user) return c.json({ error: 'User not found' }, 404);
+  
+  const { type, amount, price, dramaId, episodeId, status } = await c.req.json();
+  
+  if (!user.orders) user.orders = [];
+  user.orders.unshift({
+    id: `ord_${Date.now()}`,
+    type,
+    amount,
+    price,
+    dramaId,
+    episodeId,
+    status: status || 'completed',
+    createdAt: new Date().toISOString()
+  });
+  
+  return c.json({ success: true });
 });
 
 app.post('/api/coins/purchase', async (c) => {
@@ -277,28 +437,24 @@ app.get('/', async (c) => {
     const object = await c.env.VIDEOS.get('static/index.html');
     if (object) {
       return new Response(object.body, {
-        headers: { 'Content-Type': 'text/html' }
+        headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-cache' }
       });
     }
   } catch (e) {}
   return c.html('<h1>The Red API</h1><p>API is running</p>');
 });
 
-// 静态文件服务
-app.get('/:path', async (c) => {
-  const path = c.req.param('path');
-  if (path.startsWith('api/') || path.startsWith('videos/')) {
-    return c.text('Not found', 404);
-  }
+// 静态文件服务 - assets
+app.get('/assets/:file', async (c) => {
+  const file = c.req.param('file');
   try {
-    const object = await c.env.VIDEOS.get(`static/${path}`);
+    const object = await c.env.VIDEOS.get(`static/assets/${file}`);
     if (object) {
-      const contentType = path.endsWith('.js') ? 'application/javascript' :
-                         path.endsWith('.css') ? 'text/css' :
-                         path.endsWith('.html') ? 'text/html' :
+      const contentType = file.endsWith('.js') ? 'application/javascript' :
+                         file.endsWith('.css') ? 'text/css' :
                          'application/octet-stream';
       return new Response(object.body, {
-        headers: { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=31536000' }
+        headers: { 'Content-Type': contentType, 'Cache-Control': 'no-cache' }
       });
     }
   } catch (e) {}

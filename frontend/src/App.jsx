@@ -28,10 +28,38 @@ export default function App() {
   const [coins, setCoins] = useState(0)
   const [checkedIn, setCheckedIn] = useState(false)
   const [streak, setStreak] = useState(0)
+  const [username, setUsername] = useState('')
+  const [avatar, setAvatar] = useState('')
+  const [history, setHistory] = useState([])
+  const [favorites, setFavorites] = useState([])
+  const [orders, setOrders] = useState([])
+  const [settings, setSettings] = useState({ notifications: true, autoplay: true, quality: 'auto' })
+  const [showSubPage, setShowSubPage] = useState(null) // history, favorites, settings, orders
   const [userId] = useState(() => {
     const params = new URLSearchParams(window.location.search)
     return params.get('user_id') || `user_${Date.now()}`
   })
+
+  // 加载用户数据
+  const loadUserData = () => {
+    fetch(`${API_BASE}/user/${userId}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data && !data.error) {
+          setCoins(data.coins || 0)
+          const today = new Date().toISOString().slice(0, 10)
+          setCheckedIn(data.lastCheckIn === today)
+          setStreak(data.streak || 0)
+          setUsername(data.username || `user_${userId}`)
+          setAvatar(data.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`)
+          setHistory(data.history || [])
+          setFavorites(data.favorites || [])
+          setOrders(data.orders || [])
+          setSettings(data.settings || { notifications: true, autoplay: true, quality: 'auto' })
+        }
+      })
+      .catch(() => {})
+  }
 
   // 初始化用户并获取状态
   useEffect(() => {
@@ -43,6 +71,12 @@ export default function App() {
           const today = new Date().toISOString().slice(0, 10)
           setCheckedIn(data.lastCheckIn === today)
           setStreak(data.streak || 0)
+          setUsername(data.username || `user_${userId}`)
+          setAvatar(data.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`)
+          setHistory(data.history || [])
+          setFavorites(data.favorites || [])
+          setOrders(data.orders || [])
+          setSettings(data.settings || { notifications: true, autoplay: true, quality: 'auto' })
         }
       })
       .catch(() => {
@@ -76,6 +110,8 @@ export default function App() {
     setCurrentEpisode(episodeIndex)
     setShowPlayer(true)
     setShowEpisodes(false)
+    // 记录历史
+    addToHistory(drama, episodeIndex)
   }
 
   // 下一集
@@ -141,6 +177,69 @@ export default function App() {
       return episode.url
     }
     return `${API_BASE.replace('/api', '')}${episode.url}`
+  }
+
+  // 记录观看历史
+  const addToHistory = async (drama, episodeIndex) => {
+    try {
+      await fetch(`${API_BASE}/user/${userId}/history`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dramaId: drama.id,
+          episodeId: drama.episodes[episodeIndex].id,
+          dramaTitle: drama.title,
+          dramaCover: drama.cover
+        })
+      })
+      loadUserData()
+    } catch (e) {}
+  }
+
+  // 添加/取消收藏
+  const toggleFavorite = async (dramaId) => {
+    const isFav = favorites.some(f => f.dramaId === dramaId)
+    if (isFav) {
+      await fetch(`${API_BASE}/user/${userId}/favorite/${dramaId}`, { method: 'DELETE' })
+    } else {
+      await fetch(`${API_BASE}/user/${userId}/favorite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dramaId })
+      })
+    }
+    loadUserData()
+  }
+
+  // 检查是否收藏
+  const isFavorite = (dramaId) => favorites.some(f => f.dramaId === dramaId)
+
+  // 更新用户资料
+  const updateProfile = async (newUsername) => {
+    try {
+      await fetch(`${API_BASE}/user/${userId}/profile`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: newUsername })
+      })
+      setUsername(newUsername)
+      alert('资料更新成功！')
+    } catch (e) {
+      alert('更新失败')
+    }
+  }
+
+  // 更新设置
+  const updateSettings = async (key, value) => {
+    const newSettings = { ...settings, [key]: value }
+    setSettings(newSettings)
+    try {
+      await fetch(`${API_BASE}/user/${userId}/profile`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings: newSettings })
+      })
+    } catch (e) {}
   }
 
   // 筛选剧集
@@ -321,22 +420,234 @@ export default function App() {
     </div>
   )
 
-  // 渲染我的页
-  const renderProfile = () => (
-    <div className="profile-page">
-      <div className="profile-header">
-        <div className="avatar">👤</div>
-        <p>用户: {userId}</p>
-        <p style={{color: '#888', marginTop: 5}}>连续签到: {streak} 天</p>
+  // 渲染浏览历史页
+  const renderHistoryPage = () => (
+    <div className="sub-page">
+      <div className="sub-header">
+        <button onClick={() => setShowSubPage(null)}>← 返回</button>
+        <h3>浏览历史</h3>
+        <span></span>
       </div>
-      <div className="profile-menu">
-        <div className="menu-item" onClick={() => alert('功能开发中')}>👀 浏览历史</div>
-        <div className="menu-item" onClick={() => alert('功能开发中')}>❤️ 收藏</div>
-        <div className="menu-item" onClick={() => alert('功能开发中')}>⚙️ 设置</div>
-        <div className="menu-item" onClick={() => alert('请联系客服 @xxx')}>📞 联系我们</div>
+      <div className="history-list">
+        {history.length === 0 ? (
+          <div className="empty-state">暂无浏览记录</div>
+        ) : (
+          history.map((item, idx) => (
+            <div key={idx} className="history-item" onClick={() => {
+              const drama = dramas.find(d => d.id === item.dramaId)
+              if (drama) {
+                const epIdx = drama.episodes.findIndex(e => e.id === item.episodeId)
+                playDrama(drama, epIdx >= 0 ? epIdx : 0)
+              }
+            }}>
+              <img src={item.dramaCover} alt={item.dramaTitle} />
+              <div className="history-info">
+                <h4>{item.dramaTitle}</h4>
+                <p>看到第{item.episodeId}集</p>
+                <span className="time">{new Date(item.watchedAt).toLocaleDateString()}</span>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   )
+
+  // 渲染收藏页
+  const renderFavoritesPage = () => (
+    <div className="sub-page">
+      <div className="sub-header">
+        <button onClick={() => setShowSubPage(null)}>← 返回</button>
+        <h3>我的收藏</h3>
+        <span></span>
+      </div>
+      <div className="favorites-list">
+        {favorites.length === 0 ? (
+          <div className="empty-state">暂无收藏</div>
+        ) : (
+          favorites.map((fav, idx) => {
+            const drama = dramas.find(d => d.id === fav.dramaId)
+            if (!drama) return null
+            return (
+              <div key={idx} className="favorite-item">
+                <div className="drama-card" onClick={() => playDrama(drama, 0)}>
+                  <div className="drama-cover">
+                    <img src={drama.cover} alt={drama.title} />
+                    <span className="episode-tag">全{drama.episodes.length}集</span>
+                  </div>
+                  <h4>{drama.title}</h4>
+                </div>
+                <button className="unfavorite-btn" onClick={(e) => {
+                  e.stopPropagation()
+                  toggleFavorite(drama.id)
+                }}>❤️ 已收藏</button>
+              </div>
+            )
+          })
+        )}
+      </div>
+    </div>
+  )
+
+  // 渲染设置页
+  const renderSettingsPage = () => (
+    <div className="sub-page">
+      <div className="sub-header">
+        <button onClick={() => setShowSubPage(null)}>← 返回</button>
+        <h3>设置</h3>
+        <span></span>
+      </div>
+      <div className="settings-list">
+        <div className="setting-item">
+          <span>头像</span>
+          <img src={avatar} alt="avatar" className="setting-avatar" />
+        </div>
+        <div className="setting-item">
+          <span>昵称</span>
+          <input 
+            type="text" 
+            value={username} 
+            onChange={(e) => setUsername(e.target.value)}
+            onBlur={() => updateProfile(username)}
+            className="setting-input"
+          />
+        </div>
+        <div className="setting-item">
+          <span>金币</span>
+          <span className="coin-text">💰 {coins}</span>
+        </div>
+        <div className="setting-item">
+          <span>接收推送</span>
+          <label className="switch">
+            <input 
+              type="checkbox" 
+              checked={settings.notifications}
+              onChange={(e) => updateSettings('notifications', e.target.checked)}
+            />
+            <span className="slider"></span>
+          </label>
+        </div>
+        <div className="setting-item">
+          <span>自动播放下一集</span>
+          <label className="switch">
+            <input 
+              type="checkbox" 
+              checked={settings.autoplay}
+              onChange={(e) => updateSettings('autoplay', e.target.checked)}
+            />
+            <span className="slider"></span>
+          </label>
+        </div>
+        <div className="setting-item">
+          <span>视频画质</span>
+          <select 
+            value={settings.quality}
+            onChange={(e) => updateSettings('quality', e.target.value)}
+            className="setting-select"
+          >
+            <option value="auto">自动</option>
+            <option value="high">高清</option>
+            <option value="low">省流量</option>
+          </select>
+        </div>
+        <div className="setting-item" onClick={() => {
+          if (confirm('确定清除缓存吗？')) {
+            alert('缓存已清除')
+          }
+        }}>
+          <span>清除缓存</span>
+          <span className="arrow">→</span>
+        </div>
+        <div className="setting-item">
+          <span>版本</span>
+          <span className="version">v1.0.0</span>
+        </div>
+      </div>
+    </div>
+  )
+
+  // 渲染订单页
+  const renderOrdersPage = () => (
+    <div className="sub-page">
+      <div className="sub-header">
+        <button onClick={() => setShowSubPage(null)}>← 返回</button>
+        <h3>充值记录</h3>
+        <span></span>
+      </div>
+      <div className="orders-list">
+        {orders.length === 0 ? (
+          <div className="empty-state">暂无充值记录</div>
+        ) : (
+          orders.map((order, idx) => (
+            <div key={idx} className="order-item">
+              <div className="order-info">
+                <span className="order-type">{order.type === 'recharge' ? '💰 充值' : '🔓 解锁'}</span>
+                <span className="order-amount">{order.amount}金币</span>
+              </div>
+              <div className="order-detail">
+                <span>${order.price}</span>
+                <span className="order-time">{new Date(order.createdAt).toLocaleDateString()}</span>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+
+  // 渲染我的页
+  const renderProfile = () => {
+    if (showSubPage === 'history') return renderHistoryPage()
+    if (showSubPage === 'favorites') return renderFavoritesPage()
+    if (showSubPage === 'settings') return renderSettingsPage()
+    if (showSubPage === 'orders') return renderOrdersPage()
+    
+    return (
+      <div className="profile-page">
+        <div className="profile-header">
+          <img src={avatar} alt="avatar" className="avatar-img" />
+          <p className="username">{username}</p>
+          <p className="user-id">ID: {userId}</p>
+          <div className="stats-row">
+            <div className="stat-item">
+              <span className="stat-num">{streak}</span>
+              <span className="stat-label">连续签到</span>
+            </div>
+            <div className="stat-item">
+              <span className="stat-num">{coins}</span>
+              <span className="stat-label">金币</span>
+            </div>
+            <div className="stat-item">
+              <span className="stat-num">{history.length}</span>
+              <span className="stat-label">历史</span>
+            </div>
+          </div>
+        </div>
+        <div className="profile-menu">
+          <div className="menu-item" onClick={() => setShowSubPage('history')}>
+            <span>👀 浏览历史</span>
+            <span className="arrow">→</span>
+          </div>
+          <div className="menu-item" onClick={() => setShowSubPage('favorites')}>
+            <span>❤️ 我的收藏</span>
+            <span className="arrow">→</span>
+          </div>
+          <div className="menu-item" onClick={() => setShowSubPage('orders')}>
+            <span>📦 充值记录</span>
+            <span className="arrow">→</span>
+          </div>
+          <div className="menu-item" onClick={() => setShowSubPage('settings')}>
+            <span>⚙️ 设置</span>
+            <span className="arrow">→</span>
+          </div>
+          <div className="menu-item" onClick={() => alert('请联系客服 @thered_support')}>
+            <span>📞 联系我们</span>
+            <span className="arrow">→</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (loading) {
     return (
@@ -803,10 +1114,278 @@ export default function App() {
           padding: 15px 20px;
           border-bottom: 1px solid #333;
           cursor: pointer;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
         }
         
         .menu-item:active {
           background: #252525;
+        }
+        
+        .menu-item .arrow {
+          color: #666;
+        }
+        
+        /* 子页面 */
+        .sub-page {
+          min-height: 100vh;
+          background: var(--bg-dark);
+        }
+        
+        .sub-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 15px 20px;
+          background: var(--bg-card);
+          border-bottom: 1px solid #333;
+          position: sticky;
+          top: 0;
+          z-index: 10;
+        }
+        
+        .sub-header button {
+          background: none;
+          border: none;
+          color: var(--primary);
+          font-size: 16px;
+        }
+        
+        .sub-header h3 {
+          font-size: 18px;
+        }
+        
+        /* 历史列表 */
+        .history-list, .favorites-list, .orders-list, .settings-list {
+          padding: 15px;
+        }
+        
+        .empty-state {
+          text-align: center;
+          padding: 60px 20px;
+          color: #666;
+        }
+        
+        .history-item {
+          display: flex;
+          gap: 15px;
+          padding: 12px;
+          background: var(--bg-card);
+          border-radius: 12px;
+          margin-bottom: 12px;
+          cursor: pointer;
+        }
+        
+        .history-item img {
+          width: 80px;
+          height: 100px;
+          object-fit: cover;
+          border-radius: 8px;
+        }
+        
+        .history-info {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+        }
+        
+        .history-info h4 {
+          font-size: 15px;
+          margin-bottom: 5px;
+        }
+        
+        .history-info p {
+          color: #888;
+          font-size: 13px;
+        }
+        
+        .history-info .time {
+          color: #666;
+          font-size: 12px;
+          margin-top: 5px;
+        }
+        
+        /* 收藏 */
+        .favorite-item {
+          display: flex;
+          align-items: center;
+          gap: 15px;
+          padding: 12px;
+          background: var(--bg-card);
+          border-radius: 12px;
+          margin-bottom: 12px;
+        }
+        
+        .unfavorite-btn {
+          background: var(--primary);
+          color: #fff;
+          border: none;
+          padding: 8px 16px;
+          border-radius: 20px;
+          font-size: 13px;
+        }
+        
+        /* 设置 */
+        .setting-item {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 15px 20px;
+          background: var(--bg-card);
+          border-radius: 12px;
+          margin-bottom: 10px;
+          cursor: pointer;
+        }
+        
+        .setting-avatar {
+          width: 50px;
+          height: 50px;
+          border-radius: 50%;
+        }
+        
+        .setting-input {
+          background: var(--bg-dark);
+          border: 1px solid #333;
+          color: #fff;
+          padding: 8px 12px;
+          border-radius: 8px;
+          width: 150px;
+        }
+        
+        .setting-select {
+          background: var(--bg-dark);
+          border: 1px solid #333;
+          color: #fff;
+          padding: 8px 12px;
+          border-radius: 8px;
+        }
+        
+        .coin-text {
+          color: #ffd700;
+          font-weight: bold;
+        }
+        
+        .version {
+          color: #666;
+        }
+        
+        .switch {
+          position: relative;
+          width: 50px;
+          height: 28px;
+        }
+        
+        .switch input {
+          opacity: 0;
+          width: 0;
+          height: 0;
+        }
+        
+        .slider {
+          position: absolute;
+          cursor: pointer;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background-color: #333;
+          transition: 0.3s;
+          border-radius: 28px;
+        }
+        
+        .slider:before {
+          position: absolute;
+          content: "";
+          height: 22px;
+          width: 22px;
+          left: 3px;
+          bottom: 3px;
+          background-color: white;
+          transition: 0.3s;
+          border-radius: 50%;
+        }
+        
+        input:checked + .slider {
+          background-color: var(--primary);
+        }
+        
+        input:checked + .slider:before {
+          transform: translateX(22px);
+        }
+        
+        /* 订单 */
+        .order-item {
+          background: var(--bg-card);
+          border-radius: 12px;
+          padding: 15px 20px;
+          margin-bottom: 10px;
+        }
+        
+        .order-info {
+          display: flex;
+          justify-content: space-between;
+          margin-bottom: 8px;
+        }
+        
+        .order-type {
+          font-size: 15px;
+        }
+        
+        .order-amount {
+          color: #ffd700;
+          font-weight: bold;
+        }
+        
+        .order-detail {
+          display: flex;
+          justify-content: space-between;
+          color: #888;
+          font-size: 13px;
+        }
+        
+        /* 个人中心头部 */
+        .avatar-img {
+          width: 80px;
+          height: 80px;
+          border-radius: 50%;
+          margin-bottom: 15px;
+        }
+        
+        .username {
+          font-size: 20px;
+          font-weight: bold;
+          margin-bottom: 5px;
+        }
+        
+        .user-id {
+          color: #666;
+          font-size: 13px;
+          margin-bottom: 20px;
+        }
+        
+        .stats-row {
+          display: flex;
+          justify-content: space-around;
+        }
+        
+        .stat-item {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+        }
+        
+        .stat-num {
+          font-size: 24px;
+          font-weight: bold;
+          color: var(--primary);
+        }
+        
+        .stat-label {
+          font-size: 12px;
+          color: #888;
+          margin-top: 5px;
         }
       `}</style>
     </div>

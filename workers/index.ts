@@ -162,6 +162,29 @@ app.get('/api/user/:id', (c) => {
   return c.json(user);
 });
 
+// 领取任务奖励
+app.post('/api/task/claim', async (c) => {
+  const { userId, reward, taskType } = await c.req.json();
+  const user = users.get(userId);
+  if (!user) return c.json({ error: 'User not found' }, 404);
+  
+  user.coins += reward;
+  
+  // 记录订单
+  if (!user.orders) user.orders = [];
+  user.orders.unshift({
+    id: `task_${Date.now()}`,
+    type: 'task',
+    amount: reward,
+    price: 0,
+    taskType,
+    status: 'completed',
+    createdAt: new Date().toISOString()
+  });
+  
+  return c.json({ success: true, coins: user.coins });
+});
+
 // 更新用户资料
 app.put('/api/user/:id/profile', async (c) => {
   const userId = c.req.param('id');

@@ -399,26 +399,237 @@ export default function App() {
     </div>
   )
 
+  // 任务配置
+  const dailyTasks = [
+    { id: 'daily_checkin', name: '每日签到', desc: '签到一次', reward: 20, icon: '⏰', type: 'checkin' },
+    { id: 'daily_watch1', name: '观看视频', desc: '累计观看1集', reward: 10, icon: '📺', type: 'watch', target: 1 },
+    { id: 'daily_watch5', name: '观看达人', desc: '累计观看5集', reward: 30, icon: '🎬', type: 'watch', target: 5 },
+    { id: 'daily_share', name: '分享好剧', desc: '分享给好友', reward: 50, icon: '📤', type: 'share', target: 1 },
+  ]
+
+  const newbieTasks = [
+    { id: 'newbie_first', name: '初来乍到', desc: '完成首次签到', reward: 100, icon: '👋', type: 'checkin' },
+    { id: 'newbie_favorite', name: '收藏好剧', desc: '收藏第一部剧', reward: 50, icon: '❤️', type: 'favorite', target: 1 },
+    { id: 'newbie_recharge', name: '首次充值', desc: '任意金额充值', reward: 100, icon: '💳', type: 'recharge', target: 1 },
+    { id: 'newbie_complete', name: '看完三部', desc: '看完三部剧', reward: 200, icon: '🏆', type: 'complete', target: 3 },
+  ]
+
+  // 任务状态
+  const [taskProgress, setTaskProgress] = useState({
+    daily_checkin: false,
+    daily_watch1: 0,
+    daily_watch5: 0,
+    daily_share: 0,
+    newbie_first: false,
+    newbie_favorite: 0,
+    newbie_recharge: false,
+    newbie_complete: 0,
+    lastDailyReset: new Date().toISOString().slice(0, 10)
+  })
+
+  // 领取任务奖励
+  const claimTaskReward = async (task) => {
+    // 检查是否可领取
+    const canClaim = task.type === 'checkin' ? !taskProgress[task.id] :
+                     task.target ? taskProgress[task.id] >= task.target :
+                     !taskProgress[task.id]
+    
+    if (!canClaim) return
+    
+    // 发放奖励
+    try {
+      // 更新金币
+      await fetch(`${API_BASE}/coins/purchase`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, packageId: 0, reward: task.reward })
+      })
+      
+      // 更新任务进度
+      const newProgress = { ...taskProgress }
+      if (task.type === 'checkin') {
+        newProgress[task.id] = true
+      } else if (task.type === 'watch' || task.type === 'favorite') {
+        newProgress[task.id] = 0 // 重置
+      }
+      setTaskProgress(newProgress)
+      
+      // 记录订单
+      await fetch(`${API_BASE}/user/${userId}/order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'task',
+          amount: task.reward,
+          price: 0,
+          status: 'completed'
+        })
+      })
+      
+      loadUserData()
+      alert(`🎉 任务完成！获得 ${task.reward} 金币`)
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  // 检查任务进度
+  const checkTaskProgress = async () => {
+    // 检查每日任务重置
+    const today = new Date().toISOString().slice(0, 10)
+    if (taskProgress.lastDailyReset !== today) {
+      // 重置每日任务
+      setTaskProgress({
+        ...taskProgress,
+        daily_checkin: false,
+        daily_watch1: 0,
+        daily_watch5: 0,
+        daily_share: 0,
+        lastDailyReset: today
+      })
+    }
+    
+    // 更新观看任务进度
+    if (history.length > 0) {
+      const watchCount = history.length
+      setTaskProgress(prev => ({
+        ...prev,
+        daily_watch1: Math.min(watchCount, 1),
+        daily_watch5: Math.min(watchCount, 5)
+      }))
+    }
+    
+    // 更新新手任务
+    if (history.length > 0) {
+      setTaskProgress(prev => ({ ...prev, newbie_first: true }))
+    }
+    if (favorites.length > 0) {
+      setTaskProgress(prev => ({ ...prev, newbie_favorite: favorites.length }))
+    }
+    if (orders.length > 0) {
+      const hasRecharge = orders.some(o => o.type === 'recharge')
+      setTaskProgress(prev => ({ ...prev, newbie_recharge: hasRecharge }))
+    }
+  }
+
+  useEffect(() => {
+    if (history.length > 0) {
+      checkTaskProgress()
+    }
+  }, [history, favorites, orders])
+
   // 渲染任务页
-  const renderTasks = () => (
-    <div className="tasks-page">
-      <h3>每日任务</h3>
-      <div className="task-list">
-        <div className="task-item">
-          <span>📺 观看视频</span>
-          <span>+10 金币</span>
+  const renderTasks = () => {
+    const canClaimDaily = (task) => {
+      if (task.type === 'checkin') return checkedIn && !taskProgress[task.id]
+      if (task.type === 'watch') return taskProgress[task.id] >= task.target
+      if (task.type === 'share') return taskProgress[task.id] >= task.target
+      return false
+    }
+
+    const canClaimNewbie = (task) => {
+      if (task.type === 'checkin') return taskProgress[task.id]
+      if (task.type === 'favorite') return taskProgress[task.id] >= task.target
+      if (task.type === 'recharge') return taskProgress[task.id]
+      if (task.type === 'complete') return taskProgress[task.id] >= task.target
+      return false
+    }
+
+    const getProgressText = (task) => {
+      if (task.type === 'checkin') return checkedIn ? '✅ 已完成' : '未完成'
+      if (task.type === 'watch') return `${taskProgress[task.id] || 0}/${task.target}`
+      if (task.type === 'share') return `${taskProgress[task.id] || 0}/${task.target}`
+      if (task.type === 'favorite') return `${taskProgress[task.id] || 0}/${task.target}`
+      if (task.type === 'recharge') return taskProgress[task.id] ? '✅ 已完成' : '未完成'
+      if (task.type === 'complete') return `${taskProgress[task.id] || 0}/${task.target}`
+      return ''
+    }
+
+    return (
+      <div className="tasks-page">
+        <div className="tasks-header">
+          <h2>任务中心</h2>
+          <div className="task-stats">
+            <span>💰 金币: {coins}</span>
+          </div>
         </div>
-        <div className="task-item">
-          <span>⏰ 签到</span>
-          <span>+20 金币</span>
+
+        {/* 每日任务 */}
+        <div className="task-section">
+          <h3>📅 每日任务</h3>
+          <p className="task-tip">每天0点刷新</p>
+          <div className="task-list">
+            {dailyTasks.map(task => (
+              <div key={task.id} className={`task-item ${canClaimDaily(task) ? 'claimable' : ''}`}>
+                <div className="task-icon">{task.icon}</div>
+                <div className="task-info">
+                  <h4>{task.name}</h4>
+                  <p>{task.desc}</p>
+                  <span className="task-progress">{getProgressText(task)}</span>
+                </div>
+                <div className="task-reward">
+                  <span>+{task.reward}</span>
+                  <button 
+                    className="claim-btn"
+                    disabled={!canClaimDaily(task)}
+                    onClick={() => claimTaskReward(task)}
+                  >
+                    {canClaimDaily(task) ? '领取' : '未完成'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-        <div className="task-item">
-          <span>📤 分享邀请</span>
-          <span>+50 金币</span>
+
+        {/* 新手任务 */}
+        <div className="task-section">
+          <h3>🌟 新手任务</h3>
+          <p className="task-tip">完成一次永久有效</p>
+          <div className="task-list">
+            {newbieTasks.map(task => (
+              <div key={task.id} className={`task-item ${canClaimNewbie(task) ? 'claimable' : ''}`}>
+                <div className="task-icon">{task.icon}</div>
+                <div className="task-info">
+                  <h4>{task.name}</h4>
+                  <p>{task.desc}</p>
+                  <span className="task-progress">{getProgressText(task)}</span>
+                </div>
+                <div className="task-reward">
+                  <span>+{task.reward}</span>
+                  <button 
+                    className="claim-btn"
+                    disabled={!canClaimNewbie(task)}
+                    onClick={() => claimTaskReward(task)}
+                  >
+                    {canClaimNewbie(task) ? '领取' : '进行中'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 邀请好友 */}
+        <div className="task-section">
+          <h3>🎁 邀请好友</h3>
+          <div className="invite-box">
+            <p>邀请好友来看剧，双方都能获得金币！</p>
+            <div className="invite-code">
+              <span>邀请码: </span>
+              <strong>{userId}</strong>
+            </div>
+            <button className="share-btn" onClick={() => {
+              navigator.clipboard.writeText(`快来看短剧！邀请码: ${userId}`)
+              alert('邀请码已复制！')
+            }}>
+              📋 复制邀请码
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-  )
+    )
+  }
 
   // 渲染浏览历史页
   const renderHistoryPage = () => (
@@ -1070,7 +1281,41 @@ export default function App() {
         
         /* 任务页 */
         .tasks-page {
-          padding: 20px;
+          padding: 15px;
+          padding-bottom: 80px;
+        }
+        
+        .tasks-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 20px;
+        }
+        
+        .tasks-header h2 {
+          font-size: 22px;
+        }
+        
+        .task-stats {
+          background: var(--bg-card);
+          padding: 8px 15px;
+          border-radius: 20px;
+          font-size: 14px;
+        }
+        
+        .task-section {
+          margin-bottom: 25px;
+        }
+        
+        .task-section h3 {
+          font-size: 16px;
+          margin-bottom: 5px;
+        }
+        
+        .task-tip {
+          color: #666;
+          font-size: 12px;
+          margin-bottom: 12px;
         }
         
         .task-list {
@@ -1081,9 +1326,109 @@ export default function App() {
         
         .task-item {
           display: flex;
-          justify-content: space-between;
-          padding: 15px 20px;
+          align-items: center;
+          padding: 15px;
           border-bottom: 1px solid #333;
+          gap: 12px;
+        }
+        
+        .task-item.claimable {
+          background: linear-gradient(90deg, rgba(230, 57, 70, 0.1), transparent);
+        }
+        
+        .task-icon {
+          font-size: 28px;
+          width: 45px;
+          height: 45px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: var(--bg-dark);
+          border-radius: 12px;
+        }
+        
+        .task-info {
+          flex: 1;
+        }
+        
+        .task-info h4 {
+          font-size: 15px;
+          margin-bottom: 3px;
+        }
+        
+        .task-info p {
+          color: #888;
+          font-size: 12px;
+        }
+        
+        .task-progress {
+          color: var(--primary);
+          font-size: 12px;
+        }
+        
+        .task-reward {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 8px;
+        }
+        
+        .task-reward span {
+          color: #ffd700;
+          font-size: 14px;
+          font-weight: bold;
+        }
+        
+        .claim-btn {
+          background: var(--primary);
+          color: #fff;
+          border: none;
+          padding: 6px 14px;
+          border-radius: 15px;
+          font-size: 12px;
+          cursor: pointer;
+        }
+        
+        .claim-btn:disabled {
+          background: #444;
+          color: #888;
+          cursor: not-allowed;
+        }
+        
+        .invite-box {
+          background: var(--bg-card);
+          border-radius: 12px;
+          padding: 20px;
+          text-align: center;
+        }
+        
+        .invite-box p {
+          color: #888;
+          margin-bottom: 15px;
+          font-size: 14px;
+        }
+        
+        .invite-code {
+          background: var(--bg-dark);
+          padding: 12px;
+          border-radius: 8px;
+          margin-bottom: 15px;
+        }
+        
+        .invite-code strong {
+          color: var(--primary);
+          font-size: 18px;
+          letter-spacing: 2px;
+        }
+        
+        .share-btn {
+          background: linear-gradient(135deg, var(--primary), #ff6b6b);
+          color: #fff;
+          border: none;
+          padding: 12px 30px;
+          border-radius: 25px;
+          font-size: 15px;
+          cursor: pointer;
         }
         
         /* 我的页 */

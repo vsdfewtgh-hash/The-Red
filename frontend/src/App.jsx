@@ -35,6 +35,7 @@ export default function App() {
   const [orders, setOrders] = useState([])
   const [settings, setSettings] = useState({ notifications: true, autoplay: true, quality: 'auto' })
   const [showSubPage, setShowSubPage] = useState(null) // history, favorites, settings, orders
+  const [showRecordTab, setShowRecordTab] = useState(false) // false: 充值, true: 消费
   const [userId] = useState(() => {
     const params = new URLSearchParams(window.location.search)
     return params.get('user_id') || `user_${Date.now()}`
@@ -366,34 +367,165 @@ export default function App() {
     )
   }
 
+  // 充值套餐
+  const rechargePackages = [
+    { id: 1, coins: 100, price: 0.99, bonus: 0, icon: '💵' },
+    { id: 2, coins: 500, price: 4.99, bonus: 50, icon: '💰' },
+    { id: 3, coins: 1000, price: 9.99, bonus: 200, icon: '💎' },
+    { id: 4, coins: 2000, price: 19.99, bonus: 500, icon: '👑' },
+    { id: 5, coins: 5000, price: 49.99, bonus: 1500, icon: '🏆' },
+  ]
+
+  // 处理充值
+  const handleRecharge = async (pkg) => {
+    // 模拟支付流程
+    const confirmMsg = `确认充值 ${pkg.coins + pkg.bonus} 金币？\n\n价格: $${pkg.price}`
+    if (!confirm(confirmMsg)) return
+
+    try {
+      // 模拟支付成功 (实际需要接入 Telegram Stars API)
+      const res = await fetch(`${API_BASE}/coins/purchase`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, packageId: pkg.id })
+      })
+      const data = await res.json()
+      
+      if (data.success) {
+        // 记录订单
+        await fetch(`${API_BASE}/user/${userId}/order`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'recharge',
+            amount: pkg.coins + pkg.bonus,
+            price: pkg.price,
+            status: 'completed'
+          })
+        })
+        
+        setCoins(data.coins + coins)
+        loadUserData()
+        alert(`🎉 充值成功！\n获得 ${pkg.coins + pkg.bonus} 金币`)
+      }
+    } catch (e) {
+      console.error(e)
+      alert('充值失败，请稍后重试')
+    }
+  }
+
+  // 获取充值记录
+  const rechargeRecords = orders.filter(o => o.type === 'recharge')
+  const consumeRecords = orders.filter(o => o.type === 'unlock' || o.type === 'task')
+
   // 渲染钱包页
   const renderWallet = () => (
     <div className="wallet-page">
+      {/* 余额卡片 */}
       <div className="wallet-header">
-        <div className="coin-balance">
-          <span className="coin-icon">💰</span>
-          <span className="balance">{coins}</span>
+        <div className="balance-card">
+          <div className="coin-balance">
+            <span className="coin-icon">💰</span>
+            <span className="balance">{coins}</span>
+          </div>
+          <p>金币余额</p>
+          <div className="balance-actions">
+            <button className="add-btn" onClick={() => document.getElementById('recharge-section').scrollIntoView({ behavior: 'smooth' })}>
+              + 充值
+            </button>
+          </div>
         </div>
-        <p>金币余额</p>
       </div>
 
+      {/* 快捷签到 */}
       <div className="checkin-section">
         <button 
           className={`checkin-btn ${checkedIn ? 'checked' : ''}`}
           onClick={handleCheckIn}
           disabled={checkedIn}
         >
-          {checkedIn ? '✅ 已签到' : '📅 签到领金币'}
+          {checkedIn ? '✅ 今日已签到' : '📅 签到领20金币'}
         </button>
       </div>
 
-      <div className="recharge-section">
-        <h4>充值金币</h4>
+      {/* 充值套餐 */}
+      <div className="recharge-section" id="recharge-section">
+        <h4>💎 充值金币</h4>
         <div className="packages">
-          <button className="package-btn">100金币 $0.99</button>
-          <button className="package-btn">500金币 $4.99</button>
-          <button className="package-btn">1000金币 $9.99</button>
-          <button className="package-btn">2000金币 $19.99</button>
+          {rechargePackages.map(pkg => (
+            <div key={pkg.id} className="package-card" onClick={() => handleRecharge(pkg)}>
+              <div className="package-icon">{pkg.icon}</div>
+              <div className="package-info">
+                <span className="package-coins">{pkg.coins + pkg.bonus}</span>
+                <span className="package-bonus">{pkg.bonus > 0 ? `送${pkg.bonus}金币` : ''}</span>
+              </div>
+              <div className="package-price">${pkg.price}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 消费记录 */}
+      <div className="records-section">
+        <h4>�的消费记录</h4>
+        <div className="records-tabs">
+          <button 
+            className={`tab-btn ${!showRecordTab ? 'active' : ''}`}
+            onClick={() => setShowRecordTab(false)}
+          >
+            充值记录
+          </button>
+          <button 
+            className={`tab-btn ${showRecordTab ? 'active' : ''}`}
+            onClick={() => setShowRecordTab(true)}
+          >
+            消费记录
+          </button>
+        </div>
+        <div className="records-list">
+          {showRecordTab ? (
+            consumeRecords.length === 0 ? (
+              <div className="empty-record">暂无消费记录</div>
+            ) : (
+              consumeRecords.map((record, idx) => (
+                <div key={idx} className="record-item">
+                  <div className="record-icon">🔓</div>
+                  <div className="record-info">
+                    <span className="record-type">解锁视频</span>
+                    <span className="record-time">{new Date(record.createdAt).toLocaleDateString()}</span>
+                  </div>
+                  <div className="record-amount minus">-{record.amount}</div>
+                </div>
+              ))
+            )
+          ) : (
+            rechargeRecords.length === 0 ? (
+              <div className="empty-record">暂无充值记录</div>
+            ) : (
+              rechargeRecords.map((record, idx) => (
+                <div key={idx} className="record-item">
+                  <div className="record-icon">💰</div>
+                  <div className="record-info">
+                    <span className="record-type">充值金币</span>
+                    <span className="record-time">{new Date(record.createdAt).toLocaleDateString()}</span>
+                  </div>
+                  <div className="record-amount plus">+{record.amount}</div>
+                </div>
+              ))
+            )
+          )}
+        </div>
+      </div>
+
+      {/* 会员卡片 (可选) */}
+      <div className="vip-section">
+        <div className="vip-card">
+          <div className="vip-header">
+            <span className="vip-icon">👑</span>
+            <span className="vip-title">VIP会员</span>
+          </div>
+          <p className="vip-desc">开通VIP享全站免费看</p>
+          <button className="vip-btn">限时优惠 仅需$9.99/月</button>
         </div>
       </div>
     </div>
@@ -1226,15 +1358,20 @@ export default function App() {
         
         /* 钱包页 */
         .wallet-page {
-          padding: 20px;
+          padding: 15px;
+          padding-bottom: 80px;
         }
         
         .wallet-header {
+          margin-bottom: 20px;
+        }
+        
+        .balance-card {
           text-align: center;
           padding: 30px;
           background: linear-gradient(135deg, #1a1a1a, #2a1a1a);
           border-radius: 16px;
-          margin-bottom: 20px;
+          border: 1px solid #333;
         }
         
         .coin-balance {
@@ -1242,26 +1379,62 @@ export default function App() {
           align-items: center;
           justify-content: center;
           gap: 10px;
-          font-size: 36px;
+          font-size: 42px;
           font-weight: bold;
+          margin-bottom: 10px;
+        }
+        
+        .coin-icon {
+          font-size: 36px;
+        }
+        
+        .balance {
+          background: linear-gradient(135deg, #ffd700, #ffaa00);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+        }
+        
+        .balance-actions {
+          margin-top: 15px;
+        }
+        
+        .add-btn {
+          background: linear-gradient(135deg, var(--primary), #ff6b6b);
+          color: #fff;
+          border: none;
+          padding: 10px 30px;
+          border-radius: 20px;
+          font-size: 15px;
+          cursor: pointer;
         }
         
         .checkin-section {
-          margin-bottom: 30px;
+          margin-bottom: 25px;
         }
         
         .checkin-btn {
           width: 100%;
           padding: 15px;
-          background: var(--primary);
+          background: linear-gradient(135deg, #2a2a2a, #3a3a3a);
           color: #fff;
-          border: none;
+          border: 1px solid #444;
           border-radius: 12px;
-          font-size: 16px;
+          font-size: 15px;
+          cursor: pointer;
         }
         
         .checkin-btn.checked {
-          background: #333;
+          background: #222;
+          color: #888;
+        }
+        
+        .recharge-section, .records-section, .vip-section {
+          margin-bottom: 25px;
+        }
+        
+        .recharge-section h4, .records-section h4 {
+          font-size: 16px;
+          margin-bottom: 15px;
         }
         
         .packages {
@@ -1270,13 +1443,180 @@ export default function App() {
           gap: 12px;
         }
         
-        .package-btn {
-          padding: 15px;
+        .package-card {
           background: var(--bg-card);
           border: 1px solid #333;
-          color: var(--text);
           border-radius: 12px;
+          padding: 15px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        
+        .package-card:active {
+          transform: scale(0.98);
+          border-color: var(--primary);
+        }
+        
+        .package-icon {
+          font-size: 28px;
+          width: 45px;
+          height: 45px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: var(--bg-dark);
+          border-radius: 10px;
+        }
+        
+        .package-info {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+        }
+        
+        .package-coins {
+          font-size: 18px;
+          font-weight: bold;
+          color: #ffd700;
+        }
+        
+        .package-bonus {
+          font-size: 11px;
+          color: #ff6b6b;
+        }
+        
+        .package-price {
+          font-size: 16px;
+          font-weight: bold;
+          color: var(--primary);
+        }
+        
+        /* 消费记录 */
+        .records-tabs {
+          display: flex;
+          background: var(--bg-card);
+          border-radius: 10px;
+          padding: 4px;
+          margin-bottom: 15px;
+        }
+        
+        .records-tabs .tab-btn {
+          flex: 1;
+          background: none;
+          border: none;
+          color: #888;
+          padding: 10px;
+          border-radius: 8px;
           font-size: 14px;
+          cursor: pointer;
+        }
+        
+        .records-tabs .tab-btn.active {
+          background: var(--primary);
+          color: #fff;
+        }
+        
+        .records-list {
+          background: var(--bg-card);
+          border-radius: 12px;
+          overflow: hidden;
+        }
+        
+        .record-item {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 15px;
+          border-bottom: 1px solid #333;
+        }
+        
+        .record-item:last-child {
+          border-bottom: none;
+        }
+        
+        .record-icon {
+          font-size: 24px;
+        }
+        
+        .record-info {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+        }
+        
+        .record-type {
+          font-size: 14px;
+        }
+        
+        .record-time {
+          font-size: 12px;
+          color: #666;
+        }
+        
+        .record-amount {
+          font-size: 16px;
+          font-weight: bold;
+        }
+        
+        .record-amount.plus {
+          color: #4caf50;
+        }
+        
+        .record-amount.minus {
+          color: #ff6b6b;
+        }
+        
+        .empty-record {
+          padding: 40px;
+          text-align: center;
+          color: #666;
+        }
+        
+        /* VIP卡片 */
+        .vip-card {
+          background: linear-gradient(135deg, #1a1a2e, #16213e);
+          border: 1px solid #ffd700;
+          border-radius: 16px;
+          padding: 20px;
+          text-align: center;
+        }
+        
+        .vip-header {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          margin-bottom: 10px;
+        }
+        
+        .vip-icon {
+          font-size: 24px;
+        }
+        
+        .vip-title {
+          font-size: 20px;
+          font-weight: bold;
+          color: #ffd700;
+        }
+        
+        .vip-desc {
+          color: #888;
+          font-size: 14px;
+          margin-bottom: 15px;
+        }
+        
+        .vip-btn {
+          background: linear-gradient(135deg, #ffd700, #ffaa00);
+          color: #000;
+          border: none;
+          padding: 12px 30px;
+          border-radius: 25px;
+          font-size: 15px;
+          font-weight: bold;
+          cursor: pointer;
         }
         
         /* 任务页 */

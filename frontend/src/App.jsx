@@ -32,10 +32,14 @@ export default function App() {
   const [avatar, setAvatar] = useState('')
   const [history, setHistory] = useState([])
   const [favorites, setFavorites] = useState([])
+  const [likes, setLikes] = useState([]) // 我的喜欢
   const [orders, setOrders] = useState([])
   const [settings, setSettings] = useState({ notifications: true, autoplay: true, quality: 'auto' })
   const [showSubPage, setShowSubPage] = useState(null) // history, favorites, settings, orders
   const [showRecordTab, setShowRecordTab] = useState(false) // false: 充值, true: 消费
+  const [showEditProfile, setShowEditProfile] = useState(false) // 编辑资料弹窗
+  const [editUsername, setEditUsername] = useState('')
+  const [editAvatar, setEditAvatar] = useState('')
   const [userId] = useState(() => {
     const params = new URLSearchParams(window.location.search)
     return params.get('user_id') || `user_${Date.now()}`
@@ -55,6 +59,7 @@ export default function App() {
           setAvatar(data.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`)
           setHistory(data.history || [])
           setFavorites(data.favorites || [])
+          setLikes(data.likes || [])
           setOrders(data.orders || [])
           setSettings(data.settings || { notifications: true, autoplay: true, quality: 'auto' })
         }
@@ -76,6 +81,7 @@ export default function App() {
           setAvatar(data.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`)
           setHistory(data.history || [])
           setFavorites(data.favorites || [])
+          setLikes(data.likes || [])
           setOrders(data.orders || [])
           setSettings(data.settings || { notifications: true, autoplay: true, quality: 'auto' })
         }
@@ -182,8 +188,9 @@ export default function App() {
 
   // 记录观看历史
   const addToHistory = async (drama, episodeIndex) => {
+    console.log('Adding to history:', drama.title, 'episode', episodeIndex + 1)
     try {
-      await fetch(`${API_BASE}/user/${userId}/history`, {
+      const response = await fetch(`${API_BASE}/user/${userId}/history`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -193,8 +200,12 @@ export default function App() {
           dramaCover: drama.cover
         })
       })
+      const result = await response.json()
+      console.log('History add result:', result)
       loadUserData()
-    } catch (e) {}
+    } catch (e) {
+      console.error('Failed to add history:', e)
+    }
   }
 
   // 添加/取消收藏
@@ -209,21 +220,35 @@ export default function App() {
         body: JSON.stringify({ dramaId })
       })
     }
-    loadUserData()
+    // 立即更新本地状态
+    if (isFav) {
+      setFavorites(favorites.filter(f => f.dramaId !== dramaId))
+    } else {
+      setFavorites([...favorites, { dramaId, addedAt: new Date().toISOString() }])
+    }
   }
 
   // 检查是否收藏
   const isFavorite = (dramaId) => favorites.some(f => f.dramaId === dramaId)
 
-  // 更新用户资料
-  const updateProfile = async (newUsername) => {
+  // 打开编辑资料弹窗
+  const openEditProfile = () => {
+    setEditUsername(username)
+    setEditAvatar(avatar)
+    setShowEditProfile(true)
+  }
+
+  // 保存用户资料
+  const saveProfile = async () => {
     try {
       await fetch(`${API_BASE}/user/${userId}/profile`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: newUsername })
+        body: JSON.stringify({ username: editUsername, avatar: editAvatar })
       })
-      setUsername(newUsername)
+      setUsername(editUsername)
+      setAvatar(editAvatar)
+      setShowEditProfile(false)
       alert('资料更新成功！')
     } catch (e) {
       alert('更新失败')
@@ -330,6 +355,33 @@ export default function App() {
             <button onClick={togglePlay}>{isPlaying ? '⏸ 暂停' : '▶ 播放'}</button>
             <button onClick={() => setShowEpisodes(!showEpisodes)}>📋 选集</button>
             <button onClick={nextEpisode}>下一集 →</button>
+            <button onClick={() => toggleFavorite(currentDrama.id)} style={{color: isFavorite(currentDrama.id) ? '#ffd700' : '#888'}}>
+              {isFavorite(currentDrama.id) ? '★ 已收藏' : '☆ 收藏'}
+            </button>
+            <button onClick={() => {
+              const currentEpId = currentDrama.episodes[currentEpisode].id
+              const isLiked = likes.some(l => l.dramaId === currentDrama.id && l.episodeId === currentEpId)
+              if (isLiked) {
+                // 已喜欢，取消喜欢（删除这一集）
+                fetch(`${API_BASE}/user/${userId}/like/${currentDrama.id}/${currentEpId}`, { method: 'DELETE' })
+                setLikes(likes.filter(l => !(l.dramaId === currentDrama.id && l.episodeId === currentEpId)))
+              } else {
+                // 喜欢功能 - 记录这一集
+                fetch(`${API_BASE}/user/${userId}/like`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ 
+                    dramaId: currentDrama.id, 
+                    episodeId: currentEpId,
+                    dramaTitle: currentDrama.title,
+                    dramaCover: currentDrama.cover
+                  })
+                })
+                setLikes([...likes, { dramaId: currentDrama.id, episodeId: currentEpId, createdAt: new Date().toISOString() }])
+              }
+            }} style={{color: likes.some(l => l.dramaId === currentDrama.id && l.episodeId === currentDrama.episodes[currentEpisode].id) ? '#e63946' : '#888'}}>
+              {likes.some(l => l.dramaId === currentDrama.id && l.episodeId === currentDrama.episodes[currentEpisode].id) ? '❤️ 已喜欢' : '🤍 喜欢'}
+            </button>
           </div>
 
           {/* 选集弹窗 */}
@@ -560,11 +612,13 @@ export default function App() {
   })
 
   // 领取任务奖励
-  const claimTaskReward = async (task) => {
+  const claimTaskReward = async (task, e) => {
+    if (e) e.stopPropagation()
+    
     // 检查是否可领取
-    const canClaim = task.type === 'checkin' ? !taskProgress[task.id] :
-                     task.target ? taskProgress[task.id] >= task.target :
-                     !taskProgress[task.id]
+    const canClaim = task.type === 'checkin' ? !taskProgress[`${task.id}_claimed`] && checkedIn : // 未领取且已签到
+                     task.target ? taskProgress[task.id] >= task.target && !taskProgress[`${task.id}_claimed`] :
+                     taskProgress[task.id] && !taskProgress[`${task.id}_claimed`] // 布尔类型任务已完成且未领取
     
     if (!canClaim) return
     
@@ -574,16 +628,15 @@ export default function App() {
       await fetch(`${API_BASE}/coins/purchase`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, packageId: 0, reward: task.reward })
+        body: JSON.stringify({ userId, reward: task.reward })
       })
       
-      // 更新任务进度
+      // 立即更新本地金币状态
+      setCoins(coins + task.reward)
+      
+      // 更新任务进度 - 标记已领取
       const newProgress = { ...taskProgress }
-      if (task.type === 'checkin') {
-        newProgress[task.id] = true
-      } else if (task.type === 'watch' || task.type === 'favorite') {
-        newProgress[task.id] = 0 // 重置
-      }
+      newProgress[`${task.id}_claimed`] = true
       setTaskProgress(newProgress)
       
       // 记录订单
@@ -597,9 +650,6 @@ export default function App() {
           status: 'completed'
         })
       })
-      
-      loadUserData()
-      alert(`🎉 任务完成！获得 ${task.reward} 金币`)
     } catch (e) {
       console.error(e)
     }
@@ -653,21 +703,23 @@ export default function App() {
   // 渲染任务页
   const renderTasks = () => {
     const canClaimDaily = (task) => {
-      if (task.type === 'checkin') return checkedIn && !taskProgress[task.id]
-      if (task.type === 'watch') return taskProgress[task.id] >= task.target
-      if (task.type === 'share') return taskProgress[task.id] >= task.target
+      if (task.type === 'checkin') return checkedIn && !taskProgress[`${task.id}_claimed`]
+      if (task.type === 'watch') return taskProgress[task.id] >= task.target && !taskProgress[`${task.id}_claimed`]
+      if (task.type === 'share') return taskProgress[task.id] >= task.target && !taskProgress[`${task.id}_claimed`]
       return false
     }
 
     const canClaimNewbie = (task) => {
-      if (task.type === 'checkin') return taskProgress[task.id]
-      if (task.type === 'favorite') return taskProgress[task.id] >= task.target
-      if (task.type === 'recharge') return taskProgress[task.id]
-      if (task.type === 'complete') return taskProgress[task.id] >= task.target
+      if (task.type === 'checkin') return checkedIn && !taskProgress[`newbie_first_claimed`]
+      if (task.type === 'favorite') return favorites.length > 0 && !taskProgress[`newbie_favorite_claimed`]
+      if (task.type === 'recharge') return taskProgress.newbie_recharge && !taskProgress[`newbie_recharge_claimed`]
+      if (task.type === 'complete') return taskProgress.newbie_complete >= task.target && !taskProgress[`newbie_complete_claimed`]
       return false
     }
 
     const getProgressText = (task) => {
+      // 如果已领取，显示已领取
+      if (taskProgress[`${task.id}_claimed`]) return '✅ 已领取'
       if (task.type === 'checkin') return checkedIn ? '✅ 已完成' : '未完成'
       if (task.type === 'watch') return `${taskProgress[task.id] || 0}/${task.target}`
       if (task.type === 'share') return `${taskProgress[task.id] || 0}/${task.target}`
@@ -692,7 +744,30 @@ export default function App() {
           <p className="task-tip">每天0点刷新</p>
           <div className="task-list">
             {dailyTasks.map(task => (
-              <div key={task.id} className={`task-item ${canClaimDaily(task) ? 'claimable' : ''}`}>
+              <div 
+                key={task.id} 
+                className={`task-item ${canClaimDaily(task) ? 'claimable' : ''}`}
+                onClick={() => {
+                  if (task.type === 'checkin' && !checkedIn) {
+                    // 跳转到钱包页面签到
+                    setActiveTab('wallet')
+                    setTimeout(() => {
+                      document.querySelector('.checkin-btn')?.click()
+                    }, 500)
+                  } else if (task.type === 'watch') {
+                    // 跳转到首页看视频
+                    if (dramas.length > 0) {
+                      setActiveTab('home')
+                      setTimeout(() => playDrama(dramas[0], 0), 300)
+                    }
+                  } else if (task.type === 'share') {
+                    // 复制邀请链接
+                    const shareLink = `${window.location.origin}?ref=${userId}`
+                    navigator.clipboard.writeText(shareLink)
+                    alert('邀请链接已复制: ' + shareLink)
+                  }
+                }}
+              >
                 <div className="task-icon">{task.icon}</div>
                 <div className="task-info">
                   <h4>{task.name}</h4>
@@ -720,7 +795,28 @@ export default function App() {
           <p className="task-tip">完成一次永久有效</p>
           <div className="task-list">
             {newbieTasks.map(task => (
-              <div key={task.id} className={`task-item ${canClaimNewbie(task) ? 'claimable' : ''}`}>
+              <div 
+                key={task.id} 
+                className={`task-item ${canClaimNewbie(task) ? 'claimable' : ''}`}
+                onClick={() => {
+                  if (task.id === 'newbie_first' && !checkedIn) {
+                    setActiveTab('home')
+                    setTimeout(() => handleCheckin(), 300)
+                  } else if (task.id === 'newbie_favorite') {
+                    // 跳转到首页选剧收藏
+                    setActiveTab('home')
+                  } else if (task.id === 'newbie_recharge' && !taskProgress.newbie_recharge) {
+                    // 跳转到钱包充值
+                    setActiveTab('wallet')
+                  } else if (task.id === 'newbie_complete' && taskProgress.newbie_complete < 3) {
+                    // 跳转到首页看剧
+                    if (dramas.length > 0) {
+                      setActiveTab('home')
+                      setTimeout(() => playDrama(dramas[0], 0), 300)
+                    }
+                  }
+                }}
+              >
                 <div className="task-icon">{task.icon}</div>
                 <div className="task-info">
                   <h4>{task.name}</h4>
@@ -823,7 +919,46 @@ export default function App() {
                 <button className="unfavorite-btn" onClick={(e) => {
                   e.stopPropagation()
                   toggleFavorite(drama.id)
-                }}>❤️ 已收藏</button>
+                }}>★ 已收藏</button>
+              </div>
+            )
+          })
+        )}
+      </div>
+    </div>
+  )
+
+  // 渲染喜欢页
+  const renderLikesPage = () => (
+    <div className="sub-page">
+      <div className="sub-header">
+        <button onClick={() => setShowSubPage(null)}>← 返回</button>
+        <h3>我的喜欢</h3>
+        <span></span>
+      </div>
+      <div className="likes-list">
+        {likes.length === 0 ? (
+          <div className="empty-state">暂无喜欢</div>
+        ) : (
+          likes.map((like, idx) => {
+            const drama = dramas.find(d => d.id === like.dramaId)
+            if (!drama) return null
+            return (
+              <div key={idx} className="like-item">
+                <div className="drama-card" onClick={() => playDrama(drama, like.episodeId - 1 || 0)}>
+                  <div className="drama-cover">
+                    <img src={drama.cover} alt={drama.title} />
+                    <span className="episode-tag">第{like.episodeId}集</span>
+                  </div>
+                  <h4>{drama.title}</h4>
+                  <p className="like-time">{new Date(like.createdAt).toLocaleString()}</p>
+                </div>
+                <button className="unlike-btn" onClick={(e) => {
+                  e.stopPropagation()
+                  // 删除这集喜欢
+                  fetch(`${API_BASE}/user/${userId}/like/${like.dramaId}/${like.episodeId}`, { method: 'DELETE' })
+                  setLikes(likes.filter(l => !(l.dramaId === like.dramaId && l.episodeId === like.episodeId)))
+                }}>❤️ 已喜欢</button>
               </div>
             )
           })
@@ -942,25 +1077,26 @@ export default function App() {
   const renderProfile = () => {
     if (showSubPage === 'history') return renderHistoryPage()
     if (showSubPage === 'favorites') return renderFavoritesPage()
+    if (showSubPage === 'likes') return renderLikesPage()
     if (showSubPage === 'settings') return renderSettingsPage()
     if (showSubPage === 'orders') return renderOrdersPage()
     
     return (
       <div className="profile-page">
-        <div className="profile-header">
+        <div className="profile-header" onClick={openEditProfile} style={{cursor: 'pointer'}}>
           <img src={avatar} alt="avatar" className="avatar-img" />
           <p className="username">{username}</p>
-          <p className="user-id">ID: {userId}</p>
+          <p className="user-id">ID: {userId} <span style={{fontSize: 12, color: '#888'}}>（点击修改）</span></p>
           <div className="stats-row">
             <div className="stat-item">
               <span className="stat-num">{streak}</span>
               <span className="stat-label">连续签到</span>
             </div>
-            <div className="stat-item">
+            <div className="stat-item" onClick={() => setActiveTab('wallet')}>
               <span className="stat-num">{coins}</span>
               <span className="stat-label">金币</span>
             </div>
-            <div className="stat-item">
+            <div className="stat-item" onClick={() => setShowSubPage('history')}>
               <span className="stat-num">{history.length}</span>
               <span className="stat-label">历史</span>
             </div>
@@ -972,7 +1108,11 @@ export default function App() {
             <span className="arrow">→</span>
           </div>
           <div className="menu-item" onClick={() => setShowSubPage('favorites')}>
-            <span>❤️ 我的收藏</span>
+            <span>★ 我的收藏</span>
+            <span className="arrow">→</span>
+          </div>
+          <div className="menu-item" onClick={() => setShowSubPage('likes')}>
+            <span>❤️ 我的喜欢</span>
             <span className="arrow">→</span>
           </div>
           <div className="menu-item" onClick={() => setShowSubPage('orders')}>
@@ -1048,6 +1188,38 @@ export default function App() {
         {showPlayer && renderPlayer()}
       </AnimatePresence>
 
+      {/* 编辑资料弹窗 */}
+      {showEditProfile && (
+        <div className="modal-overlay" onClick={() => setShowEditProfile(false)}>
+          <div className="edit-profile-modal" onClick={e => e.stopPropagation()}>
+            <h3>编辑资料</h3>
+            <div className="edit-field">
+              <label>头像 URL</label>
+              <input 
+                type="text" 
+                value={editAvatar} 
+                onChange={e => setEditAvatar(e.target.value)}
+                placeholder="输入头像图片地址"
+              />
+              {editAvatar && <img src={editAvatar} alt="预览" className="avatar-preview" />}
+            </div>
+            <div className="edit-field">
+              <label>昵称</label>
+              <input 
+                type="text" 
+                value={editUsername} 
+                onChange={e => setEditUsername(e.target.value)}
+                placeholder="输入新昵称"
+              />
+            </div>
+            <div className="modal-btns">
+              <button className="cancel-btn" onClick={() => setShowEditProfile(false)}>取消</button>
+              <button className="save-btn" onClick={saveProfile}>保存</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
@@ -1063,11 +1235,18 @@ export default function App() {
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           background: var(--bg-dark);
           color: var(--text);
+          overflow: hidden;
+          height: 100vh;
+          position: fixed;
+          width: 100%;
         }
         
         .app {
           min-height: 100vh;
           padding-bottom: 60px;
+          overflow-y: auto;
+          height: 100vh;
+          -webkit-overflow-scrolling: touch;
         }
         
         .loading {
@@ -1440,17 +1619,18 @@ export default function App() {
         .packages {
           display: grid;
           grid-template-columns: repeat(2, 1fr);
-          gap: 12px;
+          gap: 8px;
+          overflow-x: hidden;
         }
         
         .package-card {
           background: var(--bg-card);
           border: 1px solid #333;
-          border-radius: 12px;
-          padding: 15px;
+          border-radius: 10px;
+          padding: 10px;
           display: flex;
           align-items: center;
-          gap: 12px;
+          gap: 8px;
           cursor: pointer;
           transition: all 0.2s;
         }
@@ -1461,14 +1641,14 @@ export default function App() {
         }
         
         .package-icon {
-          font-size: 28px;
-          width: 45px;
-          height: 45px;
+          font-size: 20px;
+          width: 35px;
+          height: 35px;
           display: flex;
           align-items: center;
           justify-content: center;
           background: var(--bg-dark);
-          border-radius: 10px;
+          border-radius: 8px;
         }
         
         .package-info {
@@ -1478,13 +1658,13 @@ export default function App() {
         }
         
         .package-coins {
-          font-size: 18px;
+          font-size: 14px;
           font-weight: bold;
           color: #ffd700;
         }
         
         .package-bonus {
-          font-size: 11px;
+          font-size: 10px;
           color: #ff6b6b;
         }
         
@@ -1904,6 +2084,34 @@ export default function App() {
         }
         
         .unfavorite-btn {
+          background: #ffd700;
+          color: #000;
+          border: none;
+          padding: 8px 16px;
+          border-radius: 20px;
+          font-size: 13px;
+        }
+        
+        .like-item {
+          display: flex;
+          align-items: center;
+          gap: 15px;
+          padding: 12px;
+          background: var(--bg-card);
+          border-radius: 12px;
+          margin-bottom: 12px;
+        }
+        
+        .like-time {
+          font-size: 12px;
+          color: var(--text-muted);
+        }
+        
+        .likes-list {
+          padding: 15px;
+        }
+        
+        .unlike-btn {
           background: var(--primary);
           color: #fff;
           border: none;
@@ -2059,6 +2267,7 @@ export default function App() {
           display: flex;
           flex-direction: column;
           align-items: center;
+          cursor: pointer;
         }
         
         .stat-num {
@@ -2071,6 +2280,88 @@ export default function App() {
           font-size: 12px;
           color: #888;
           margin-top: 5px;
+        }
+        
+        /* 编辑资料弹窗 */
+        .modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0,0,0,0.8);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 9999;
+        }
+        
+        .edit-profile-modal {
+          background: var(--bg-card);
+          border-radius: 16px;
+          padding: 20px;
+          width: 90%;
+          max-width: 350px;
+        }
+        
+        .edit-profile-modal h3 {
+          text-align: center;
+          margin-bottom: 20px;
+        }
+        
+        .edit-field {
+          margin-bottom: 15px;
+        }
+        
+        .edit-field label {
+          display: block;
+          font-size: 14px;
+          color: var(--text-muted);
+          margin-bottom: 8px;
+        }
+        
+        .edit-field input {
+          width: 100%;
+          padding: 10px;
+          border: 1px solid #333;
+          border-radius: 8px;
+          background: var(--bg-dark);
+          color: var(--text);
+          font-size: 14px;
+        }
+        
+        .avatar-preview {
+          width: 60px;
+          height: 60px;
+          border-radius: 50%;
+          margin-top: 10px;
+          display: block;
+        }
+        
+        .modal-btns {
+          display: flex;
+          gap: 10px;
+          margin-top: 20px;
+        }
+        
+        .cancel-btn, .save-btn {
+          flex: 1;
+          padding: 12px;
+          border-radius: 8px;
+          font-size: 15px;
+          cursor: pointer;
+        }
+        
+        .cancel-btn {
+          background: #333;
+          color: var(--text);
+          border: none;
+        }
+        
+        .save-btn {
+          background: var(--primary);
+          color: #fff;
+          border: none;
         }
       `}</style>
     </div>

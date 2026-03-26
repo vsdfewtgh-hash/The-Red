@@ -133,6 +133,7 @@ app.post('/api/user/init', async (c) => {
       unlocked: [],
       history: [], // 浏览历史
       favorites: [], // 收藏
+      likes: [], // 我的喜欢
       orders: [], // 订单记录
       settings: {
         notifications: true,
@@ -159,7 +160,14 @@ app.get('/api/user/:id', (c) => {
   const userId = c.req.param('id');
   const user = users.get(userId);
   if (!user) return c.json({ error: 'User not found' }, 404);
-  return c.json(user);
+  // 返回用户完整数据
+  return c.json({
+    ...user,
+    favorites: user.favorites || [],
+    likes: user.likes || [],
+    history: user.history || [],
+    orders: user.orders || []
+  });
 });
 
 // 领取任务奖励
@@ -302,6 +310,64 @@ app.delete('/api/user/:id/favorite/:dramaId', (c) => {
   return c.json({ success: true });
 });
 
+// 获取喜欢列表
+app.get('/api/user/:id/likes', (c) => {
+  const userId = c.req.param('id');
+  const user = users.get(userId);
+  if (!user) return c.json({ error: 'User not found' }, 404);
+  
+  return c.json(user.likes || []);
+});
+
+// 添加喜欢
+app.post('/api/user/:id/like', async (c) => {
+  const userId = c.req.param('id');
+  const user = users.get(userId);
+  if (!user) return c.json({ error: 'User not found' }, 404);
+  
+  const { dramaId, episodeId, dramaTitle, dramaCover } = await c.req.json();
+  if (!user.likes) user.likes = [];
+  
+  // 检查是否已喜欢这一集
+  if (user.likes.some(l => l.dramaId === dramaId && l.episodeId === episodeId)) {
+    return c.json({ success: true, already: true });
+  }
+  
+  user.likes.unshift({
+    dramaId,
+    episodeId,
+    dramaTitle,
+    dramaCover,
+    createdAt: new Date().toISOString()
+  });
+  
+  // 保留最近50条
+  user.likes = user.likes.slice(0, 50);
+  
+  return c.json({ success: true });
+});
+
+// 取消喜欢（支持单集或整剧）
+app.delete('/api/user/:id/like/:dramaId/:episodeId?', (c) => {
+  const userId = c.req.param('id');
+  const dramaId = parseInt(c.req.param('dramaId'));
+  const episodeId = c.req.param('episodeId') ? parseInt(c.req.param('episodeId')) : null;
+  const user = users.get(userId);
+  if (!user) return c.json({ error: 'User not found' }, 404);
+  
+  if (!user.likes) user.likes = [];
+  
+  if (episodeId) {
+    // 删除单集喜欢
+    user.likes = user.likes.filter(l => !(l.dramaId === dramaId && l.episodeId === episodeId));
+  } else {
+    // 删除整剧所有喜欢
+    user.likes = user.likes.filter(l => l.dramaId !== dramaId);
+  }
+  
+  return c.json({ success: true });
+});
+
 // 获取订单记录
 app.get('/api/user/:id/orders', (c) => {
   const userId = c.req.param('id');
@@ -335,7 +401,18 @@ app.post('/api/user/:id/order', async (c) => {
 });
 
 app.post('/api/coins/purchase', async (c) => {
-  const { userId, packageId } = await c.req.json();
+  const { userId, packageId, reward } = await c.req.json();
+  
+  // 如果是任务奖励
+  if (reward) {
+    const user = users.get(userId);
+    if (user) {
+      user.coins += reward;
+    }
+    return c.json({ success: true, coins: reward, isReward: true });
+  }
+  
+  // 正常充值
   const packages = {
     1: { coins: 100, price: 0.99 },
     2: { coins: 500, price: 4.99 },

@@ -748,6 +748,9 @@ export default function App() {
                 key={task.id} 
                 className={`task-item ${canClaimDaily(task) ? 'claimable' : ''}`}
                 onClick={() => {
+                  // 如果已领取，不做操作
+                  if (taskProgress[`${task.id}_claimed`]) return
+                  
                   if (task.type === 'checkin' && !checkedIn) {
                     // 跳转到钱包页面签到
                     setActiveTab('wallet')
@@ -779,9 +782,9 @@ export default function App() {
                   <button 
                     className="claim-btn"
                     disabled={!canClaimDaily(task)}
-                    onClick={() => claimTaskReward(task)}
+                    onClick={(e) => claimTaskReward(task, e)}
                   >
-                    {canClaimDaily(task) ? '领取' : '未完成'}
+                    {taskProgress[`${task.id}_claimed`] ? '已领取' : (canClaimDaily(task) ? '领取' : '未完成')}
                   </button>
                 </div>
               </div>
@@ -799,9 +802,14 @@ export default function App() {
                 key={task.id} 
                 className={`task-item ${canClaimNewbie(task) ? 'claimable' : ''}`}
                 onClick={() => {
+                  // 如果已领取，不做操作
+                  if (taskProgress[`${task.id}_claimed`]) return
+                  
                   if (task.id === 'newbie_first' && !checkedIn) {
-                    setActiveTab('home')
-                    setTimeout(() => handleCheckin(), 300)
+                    setActiveTab('wallet')
+                    setTimeout(() => {
+                      document.querySelector('.checkin-btn')?.click()
+                    }, 500)
                   } else if (task.id === 'newbie_favorite') {
                     // 跳转到首页选剧收藏
                     setActiveTab('home')
@@ -828,9 +836,9 @@ export default function App() {
                   <button 
                     className="claim-btn"
                     disabled={!canClaimNewbie(task)}
-                    onClick={() => claimTaskReward(task)}
+                    onClick={(e) => claimTaskReward(task, e)}
                   >
-                    {canClaimNewbie(task) ? '领取' : '进行中'}
+                    {taskProgress[`${task.id}_claimed`] ? '已领取' : (canClaimNewbie(task) ? '领取' : '进行中')}
                   </button>
                 </div>
               </div>
@@ -909,17 +917,11 @@ export default function App() {
             if (!drama) return null
             return (
               <div key={idx} className="favorite-item">
-                <div className="drama-card" onClick={() => playDrama(drama, 0)}>
-                  <div className="drama-cover">
-                    <img src={drama.cover} alt={drama.title} />
-                    <span className="episode-tag">全{drama.episodes.length}集</span>
-                  </div>
-                  <h4>{drama.title}</h4>
+                <div className="drama-cover" onClick={() => playDrama(drama, 0)}>
+                  <img src={drama.cover} alt={drama.title} />
+                  <span className="episode-tag">全{drama.episodes.length}集</span>
                 </div>
-                <button className="unfavorite-btn" onClick={(e) => {
-                  e.stopPropagation()
-                  toggleFavorite(drama.id)
-                }}>★ 已收藏</button>
+                <h4>{drama.title}</h4>
               </div>
             )
           })
@@ -945,20 +947,11 @@ export default function App() {
             if (!drama) return null
             return (
               <div key={idx} className="like-item">
-                <div className="drama-card" onClick={() => playDrama(drama, like.episodeId - 1 || 0)}>
-                  <div className="drama-cover">
-                    <img src={drama.cover} alt={drama.title} />
-                    <span className="episode-tag">第{like.episodeId}集</span>
-                  </div>
-                  <h4>{drama.title}</h4>
-                  <p className="like-time">{new Date(like.createdAt).toLocaleString()}</p>
+                <div className="drama-cover" onClick={() => playDrama(drama, like.episodeId - 1 || 0)}>
+                  <img src={drama.cover} alt={drama.title} />
+                  <span className="episode-tag">第{like.episodeId}集</span>
                 </div>
-                <button className="unlike-btn" onClick={(e) => {
-                  e.stopPropagation()
-                  // 删除这集喜欢
-                  fetch(`${API_BASE}/user/${userId}/like/${like.dramaId}/${like.episodeId}`, { method: 'DELETE' })
-                  setLikes(likes.filter(l => !(l.dramaId === like.dramaId && l.episodeId === like.episodeId)))
-                }}>❤️ 已喜欢</button>
+                <h4>{drama.title}</h4>
               </div>
             )
           })
@@ -2073,37 +2066,65 @@ export default function App() {
         }
         
         /* 收藏 */
-        .favorite-item {
+        .favorites-list, .likes-list {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 10px;
+          padding: 15px;
+        }
+        
+        .favorite-item, .like-item {
           display: flex;
+          flex-direction: column;
           align-items: center;
-          gap: 15px;
-          padding: 12px;
+          gap: 8px;
+          padding: 10px;
           background: var(--bg-card);
           border-radius: 12px;
-          margin-bottom: 12px;
+        }
+        
+        .favorite-item .drama-cover, .like-item .drama-cover {
+          width: 100%;
+          aspect-ratio: 3/4;
+          border-radius: 8px;
+          overflow: hidden;
+        }
+        
+        .favorite-item .drama-cover img, .like-item .drama-cover img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+        
+        .favorite-item h4, .like-item h4 {
+          font-size: 12px;
+          text-align: center;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          width: 100%;
         }
         
         .unfavorite-btn {
           background: #ffd700;
           color: #000;
           border: none;
-          padding: 8px 16px;
-          border-radius: 20px;
-          font-size: 13px;
+          padding: 4px 12px;
+          border-radius: 12px;
+          font-size: 11px;
         }
         
-        .like-item {
-          display: flex;
-          align-items: center;
-          gap: 15px;
-          padding: 12px;
-          background: var(--bg-card);
+        .unlike-btn {
+          background: var(--primary);
+          color: #fff;
+          border: none;
+          padding: 4px 12px;
           border-radius: 12px;
-          margin-bottom: 12px;
+          font-size: 11px;
         }
         
         .like-time {
-          font-size: 12px;
+          font-size: 11px;
           color: var(--text-muted);
         }
         

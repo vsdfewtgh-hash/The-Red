@@ -11,6 +11,7 @@
     }
   ],
   "routes": [
+    { "pattern": "drama.thered.live/*", "zone_name": "thered.live" },
     { "pattern": "api.drama.thered.live/*", "zone_name": "thered.live" }
   ]
 }

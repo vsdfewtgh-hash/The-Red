@@ -1,18 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 
-// 开发/测试用本地 API，生产用云端 API
-// 如果云端 API 超时，使用内置兜底数据
-const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-  ? 'http://127.0.0.1:8787/api'
-  : 'https://the-red-api.vsdfewtgh.workers.dev/api'
-
-// 兜底数据 - API 不可用时使用
-const FALLBACK_DRAMAS = [
-  { id: 1, title: '九块九秒杀一切', cover: 'https://picsum.photos/400/700?random=1', category: '都市', episodes: Array.from({ length: 108 }, (_, i) => ({ id: i + 1, url: `https://picsum.photos/video/400x700?random=${i+1}`, free: true })), pricePerEpisode: 100, paywallAt: 11 },
-  { id: 2, title: '和校花的海岛求生', cover: 'https://picsum.photos/400/700?random=2', category: '都市', episodes: Array.from({ length: 80 }, (_, i) => ({ id: i + 1, url: `https://picsum.photos/video/400x700?random=${i+100}`, free: true })), pricePerEpisode: 100, paywallAt: 3 },
-  { id: 3, title: '季总您的马甲叒掉了', cover: 'https://picsum.photos/400/700?random=3', category: '霸总', episodes: Array.from({ length: 6 }, (_, i) => ({ id: i + 1, url: `https://picsum.photos/video/400x700?random=${i+200}`, free: true })), pricePerEpisode: 100, paywallAt: 3 }
-];
+const API_BASE = 'http://127.0.0.1:8787/api'
 
 // 分类标签
 const CATEGORIES = [
@@ -27,8 +16,8 @@ const CATEGORIES = [
 ]
 
 export default function App() {
-  const [dramas, setDramas] = useState(FALLBACK_DRAMAS)
-  const [loading, setLoading] = useState(false)
+  const [dramas, setDramas] = useState([])
+  const [loading, setLoading] = useState(true)
   const [selectedCategory, setSelectedCategory] = useState('all')
   const [showPlayer, setShowPlayer] = useState(false)
   const [currentDrama, setCurrentDrama] = useState(null)
@@ -61,9 +50,6 @@ export default function App() {
   
   // 钱包Tab
   const [walletTab, setWalletTab] = useState('recharge')
-  const [showComment, setShowComment] = useState(false) // 评论弹窗
-  const [comments, setComments] = useState([]) // 当前剧的评论
-  const [newComment, setNewComment] = useState('') // 新评论内容
   
   const [userId] = useState(() => {
     const params = new URLSearchParams(window.location.search)
@@ -112,12 +98,12 @@ export default function App() {
         }
       })
       .catch(() => {
-        // 用户不存在，使用默认数据
-        setCoins(0)
-        setStreak(0)
-        setCheckedIn(false)
-        setUsername(`user_${userId}`)
-        setAvatar(`https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`)
+        // 用户不存在，初始化
+        fetch(`${API_BASE}/user/init`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId, username: `user_${userId}` })
+        })
       })
   }, [userId])
 
@@ -133,11 +119,7 @@ export default function App() {
         }
         setLoading(false)
       })
-      .catch(err => {
-        console.error('Failed to fetch dramas, using fallback:', err)
-        setDramas(FALLBACK_DRAMAS)
-        setLoading(false)
-      })
+      .catch(err => console.error('Failed to fetch dramas:', err))
   }, [])
 
   // 播放视频
@@ -153,11 +135,6 @@ export default function App() {
   // 下一集
   const nextEpisode = () => {
     if (currentDrama && currentEpisode < currentDrama.episodes.length - 1) {
-      // 看视频领金币 - 每看完一集给10金币
-      const newCoins = coins + 10
-      setCoins(newCoins)
-      // 通知用户
-      alert(`🎁 看视频奖励 +10 金币！`)
       setCurrentEpisode(currentEpisode + 1)
     }
   }
@@ -461,16 +438,6 @@ export default function App() {
             }} style={{color: likes.some(l => l.dramaId === currentDrama.id && l.episodeId === currentDrama.episodes[currentEpisode].id) ? '#e63946' : '#888'}}>
               {likes.some(l => l.dramaId === currentDrama.id && l.episodeId === currentDrama.episodes[currentEpisode].id) ? '❤️ 已喜欢' : '🤍 喜欢'}
             </button>
-            <button onClick={() => {
-              // 加载评论
-              const dramaComments = [
-                { id: 1, user: '用户***3', content: '太好看了！', time: '2分钟前' },
-                { id: 2, user: '用户***7', content: '期待下一集', time: '5分钟前' },
-                { id: 3, user: '用户***1', content: '演员演技真好', time: '10分钟前' },
-              ]
-              setComments(dramaComments)
-              setShowComment(true)
-            }}>💬 评论</button>
           </div>
 
           {/* 选集弹窗 */}
@@ -498,60 +465,6 @@ export default function App() {
                     >
                       第{idx + 1}集
                     </button>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* 评论弹窗 */}
-          <AnimatePresence>
-            {showComment && (
-              <motion.div 
-                className="episodes-panel"
-                initial={{ y: '100%' }}
-                animate={{ y: 0 }}
-                exit={{ y: '100%' }}
-              >
-                <div className="episodes-header">
-                  <h4>评论</h4>
-                  <button onClick={() => setShowComment(false)}>×</button>
-                </div>
-                <div style={{ padding: '10px', maxHeight: '60vh', overflow: 'auto' }}>
-                  {/* 发表评论 */}
-                  <div style={{ display: 'flex', gap: '8px', marginBottom: '15px' }}>
-                    <input 
-                      type="text" 
-                      value={newComment}
-                      onChange={(e) => setNewComment(e.target.value)}
-                      placeholder="说点什么..."
-                      style={{ flex: 1, padding: '8px', borderRadius: '20px', border: '1px solid #ddd' }}
-                    />
-                    <button 
-                      onClick={() => {
-                        if (newComment.trim()) {
-                          const comment = {
-                            id: Date.now(),
-                            user: username.slice(0, 4) + '***',
-                            content: newComment,
-                            time: '刚刚'
-                          }
-                          setComments([comment, ...comments])
-                          setNewComment('')
-                        }
-                      }}
-                      style={{ padding: '8px 16px', background: '#e63946', color: '#fff', border: 'none', borderRadius: '20px' }}
-                    >
-                      发布
-                    </button>
-                  </div>
-                  {/* 评论列表 */}
-                  {comments.map(c => (
-                    <div key={c.id} style={{ padding: '10px 0', borderBottom: '1px solid #eee' }}>
-                      <div style={{ fontWeight: 'bold', color: '#333' }}>{c.user}</div>
-                      <div style={{ color: '#666', marginTop: '4px' }}>{c.content}</div>
-                      <div style={{ fontSize: '12px', color: '#999', marginTop: '4px' }}>{c.time}</div>
-                    </div>
                   ))}
                 </div>
               </motion.div>
@@ -1000,7 +913,7 @@ export default function App() {
             </div>
             <button className="share-btn" onClick={() => {
               navigator.clipboard.writeText(`快来看短剧！邀请码: ${userId}`)
-              alert('邀请码已复制！邀请好友成功后将获得 100 金币奖励～')
+              alert('邀请码已复制！')
             }}>
               📋 复制邀请码
             </button>
@@ -1289,7 +1202,6 @@ export default function App() {
         {activeTab === 'discover' && renderDiscover()}
         {activeTab === 'messages' && renderMessages()}
         {activeTab === 'wallet' && renderWallet()}
-        {activeTab === 'tasks' && renderTasks()}
         {activeTab === 'profile' && renderProfile()}
       </div>
 
@@ -1307,9 +1219,6 @@ export default function App() {
         </button>
         <button className={`tab-btn ${activeTab === 'wallet' ? 'active' : ''}`} onClick={() => setActiveTab('wallet')}>
           <span className="tab-icon">💰</span><span>钱包</span>
-        </button>
-        <button className={`tab-btn ${activeTab === 'tasks' ? 'active' : ''}`} onClick={() => setActiveTab('tasks')}>
-          <span className="tab-icon">📋</span><span>任务</span>
         </button>
         <button className={`tab-btn ${activeTab === 'profile' ? 'active' : ''}`} onClick={() => setActiveTab('profile')}>
           <span className="tab-icon">👤</span><span>我的</span>
